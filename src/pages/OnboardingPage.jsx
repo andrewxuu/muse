@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { ChartColumn, Check, Heart, MessageCircle, Music, Settings, Smile } from 'lucide-react'
+import { Check, MessageCircle, Music, Settings, Smile } from 'lucide-react'
 import CardFrame from '../components/layout/CardFrame'
 import Logo from '../components/ui/Logo'
 import AuthForm from '../components/auth/AuthForm'
 import AppearancePicker from '../components/settings/AppearancePicker'
+import StressFace from '../components/ui/StressFace'
+import { ratingMood, stressLabel, useRatings } from '../ratings'
 import { useAccount } from '../account'
 import { useSpotify } from '../spotify/useSpotify'
 import { genres, useGenrePrefs } from '../lib/genrePrefs'
@@ -16,12 +18,6 @@ const features = [
   { icon: MessageCircle, title: 'Chat', text: 'Describe your day' },
   { icon: Music, title: 'Songs', text: 'Get matched tracks' },
   { icon: Smile, title: 'Mood', text: 'Track how you feel' },
-]
-
-const tour = [
-  { icon: MessageCircle, title: 'Chat', text: 'Talk about your mood' },
-  { icon: Heart, title: 'Saved songs', text: 'Your favorites in one place' },
-  { icon: ChartColumn, title: 'Stats', text: 'See your mood calendar and trends' },
 ]
 
 function Features() {
@@ -38,20 +34,46 @@ function Features() {
   )
 }
 
-function Tour() {
+function FirstCheckIn() {
+  const { ratings, addRating, updateRating } = useRatings()
+  const [id, setId] = useState(null)
+  const current = ratings.find((r) => r.id === id)
+
+  const pick = (value) => {
+    if (current) updateRating(current.id, { rating: value })
+    else setId(addRating(value))
+  }
+
   return (
-    <div className="flex flex-col gap-2.5">
-      {tour.map(({ icon: Icon, title, text }) => (
-        <div key={title} className="flex items-center gap-3 rounded-[14px] bg-cream p-3.5">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-teal-soft text-teal">
-            <Icon size={18} aria-hidden="true" />
-          </div>
-          <div>
-            <p className="text-[15px] font-semibold">{title}</p>
-            <p className="text-[13px] text-muted">{text}</p>
-          </div>
-        </div>
-      ))}
+    <div className="flex flex-col gap-3">
+      <div role="radiogroup" aria-label="Stress from 1, calm, to 5, very stressed" className="grid grid-cols-5 gap-2">
+        {Array.from({ length: 5 }, (_, i) => {
+          const value = i + 1
+          const on = current?.rating === value
+          return (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-label={`${value} out of 5, ${stressLabel(value)}`}
+              onClick={() => pick(value)}
+              className="flex flex-col items-center gap-1.5 rounded-[10px] py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal"
+            >
+              <StressFace mood={ratingMood(value)} size={48} ring={on} dim={!on && !!current} />
+              <span className={`text-center text-[11px] leading-tight ${on ? 'font-semibold' : 'text-muted'}`}>{stressLabel(value)}</span>
+            </button>
+          )
+        })}
+      </div>
+      {current ? (
+        <p role="status" className="flex items-center gap-1.5 text-[14px] text-teal">
+          <Check size={14} aria-hidden="true" />
+          Logged {current.rating}/5 ({stressLabel(current.rating)})
+        </p>
+      ) : (
+        <SettingsNote>You can skip this and check in later.</SettingsNote>
+      )}
     </div>
   )
 }
@@ -131,7 +153,7 @@ export default function OnboardingPage() {
   const { user, guest, finishOnboarding } = useAccount()
   const { status, connect, profile, error } = useSpotify()
   const [withAccount] = useState(() => !(user || guest))
-  const ids = withAccount ? ['welcome', 'account', 'spotify', 'genres', 'look', 'tour'] : ['welcome', 'spotify', 'genres', 'look', 'tour']
+  const ids = withAccount ? ['welcome', 'account', 'spotify', 'genres', 'look', 'checkin'] : ['welcome', 'spotify', 'genres', 'look', 'checkin']
   const [id, setId] = useState(() => {
     const saved = readKey(STEP_KEY)
     if (ids.includes(saved)) return saved
@@ -159,7 +181,7 @@ export default function OnboardingPage() {
     spotify: ['Connect Spotify', 'Muse uses Spotify to play songs and save playlists.'],
     genres: ['Pick your genres', 'Choose what you like. Muse uses it when picking songs.'],
     look: ['Make it yours', 'Pick a site palette and a stress palette.'],
-    tour: ['Quick tour', 'Everything is in the sidebar.'],
+    checkin: ['How stressed are you?', 'Your first check-in starts your mood calendar.'],
   }
 
   return (
@@ -198,7 +220,7 @@ export default function OnboardingPage() {
               <SettingsNote>You can change your palettes anytime in Settings.</SettingsNote>
             </>
           )}
-          {id === 'tour' && <Tour />}
+          {id === 'checkin' && <FirstCheckIn />}
         </>
       )}
 
