@@ -1,4 +1,5 @@
-import { ChartColumn, House, List, MessageCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ChartColumn, House, List, Maximize, MessageCircle, Minimize } from 'lucide-react'
 import Logo from '../ui/Logo'
 import { useSpotify } from '../../spotify/useSpotify'
 import { useAccount } from '../../account'
@@ -33,25 +34,61 @@ function Avatar({ image, name, size }) {
   )
 }
 
+function FullscreenButton() {
+  const [full, setFull] = useState(() => Boolean(document.fullscreenElement))
+
+  useEffect(() => {
+    const sync = () => setFull(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
+
+  const installed = matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches
+  if (!document.fullscreenEnabled || installed) return null
+
+  const toggle = () => {
+    const request = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen({ navigationUI: 'hide' })
+    request.catch(() => {})
+  }
+  const Icon = full ? Minimize : Maximize
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-pressed={full}
+      aria-label={full ? 'Exit full screen' : 'Enter full screen'}
+      className="relative -mr-1 ml-auto flex size-12 items-center justify-center rounded-full text-muted active:bg-track"
+    >
+      <Icon size={22} aria-hidden="true" />
+    </button>
+  )
+}
+
 export function MobileHeader({ onOpenSettings }) {
   const { image, name } = useProfileInfo()
 
   return (
-    <header className="flex h-16 shrink-0 items-center px-4 pt-[env(safe-area-inset-top)] md:hidden">
+    <header className="absolute inset-x-0 top-0 z-10 flex h-16 items-center px-4 pt-[env(safe-area-inset-top)] md:hidden">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 -bottom-5 top-0 bg-cream/80 backdrop-blur-md [mask-image:linear-gradient(to_bottom,black_60%,transparent)]"
+      />
       <button
         type="button"
         onClick={onOpenSettings}
         aria-haspopup="dialog"
         aria-label="Settings"
-        className="-ml-1 flex size-12 items-center justify-center rounded-full active:bg-track"
+        className="relative -ml-1 flex size-12 items-center justify-center rounded-full active:bg-track"
       >
         <span className="rounded-full p-0.5 ring-1 ring-line">
           <Avatar image={image} name={name} size="size-10" />
         </span>
       </button>
-      <div className="ml-2">
+      <div className="relative ml-2">
         <DevBadge />
       </div>
+      <FullscreenButton />
     </header>
   )
 }
