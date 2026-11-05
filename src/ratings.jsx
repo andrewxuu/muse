@@ -1,6 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { setRealRatings } from './data/sampleMoods'
 import { readKey, writeKey } from './lib/storageKeys'
+import { useAccount } from './account'
+import { reportSyncError } from './lib/cloudSync'
+import { markSynced, pullRatings, pushRatings } from './lib/ratingsSync'
 
 const STORAGE_KEY = 'moodbot:ratings'
 const SCALE_KEY = 'moodbot:ratings-scale'
@@ -32,8 +35,37 @@ const load = () => {
 }
 
 export function RatingsProvider({ children }) {
+  const { user } = useAccount()
+  const userId = user?.id ?? null
   const [ratings, setRatings] = useState(load)
+  const [pulledFor, setPulledFor] = useState(null)
+  const synced = useRef(new Map())
   setRealRatings(ratings)
+
+  useEffect(() => {
+    synced.current = new Map()
+    if (!userId) return
+    let live = true
+    pullRatings(userId)
+      .then((remote) => {
+        if (!live) return
+        markSynced(synced.current, remote)
+        setRatings((prev) => {
+          const have = new Set(prev.map((r) => r.id))
+          return [...prev, ...remote.filter((r) => !have.has(r.id))].sort((a, b) => b.at.localeCompare(a.at))
+        })
+        setPulledFor(userId)
+      })
+      .catch(reportSyncError)
+    return () => {
+      live = false
+    }
+  }, [userId])
+
+  useEffect(() => {
+    if (!userId || pulledFor !== userId) return
+    pushRatings(userId, ratings, synced.current).catch(reportSyncError)
+  }, [ratings, userId, pulledFor])
 
   useEffect(() => {
     try {
