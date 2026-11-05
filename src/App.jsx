@@ -10,6 +10,7 @@ import HomePage from './pages/HomePage'
 import MoodPage from './pages/MoodPage'
 import PlaylistsPage from './pages/PlaylistsPage'
 import { SpotifyProvider, useSpotify } from './spotify/useSpotify'
+import CallBadge from './components/dev/CallBadge'
 import { PlayerProvider, usePlayer } from './spotify/usePlayer'
 import { FeedbackProvider } from './feedback'
 import { AccountProvider, useAccount } from './account'
@@ -37,6 +38,7 @@ export default function App() {
 
   return (
     <ThemeProvider>
+      {import.meta.env.DEV && <CallBadge />}
       <AccountProvider>
         <AppearanceProvider>
           <SpotifyProvider>

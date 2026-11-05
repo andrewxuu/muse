@@ -1,6 +1,7 @@
 import { getAccessToken, logout, ReconnectError } from './auth'
 import { normalize } from '../lib/filters'
 import { forgetSaved, loadSaved, lookupTrack, saveData, saveTrack } from '../lib/spotifyStore'
+import { logBlock, logCall } from '../lib/callLog'
 
 const BASE = 'https://api.spotify.com/v1'
 
@@ -94,6 +95,7 @@ async function execute(url, method, body, attempt = 0) {
   } finally {
     freeSlot()
   }
+  logCall(method, url, res.status)
 
   if (res.status === 401) {
     logout()
@@ -103,6 +105,7 @@ async function execute(url, method, body, attempt = 0) {
     const data = await res.json().catch(() => ({}))
     const quota = data.error?.reason === 'QUOTA_EXCEEDED'
     const header = Number(res.headers.get('Retry-After')) || 0
+    logBlock(header || (quota ? QUOTA_COOLDOWN : DEFAULT_COOLDOWN), quota)
     if (header && header <= SHORT_WAIT && attempt < 2 && !quota) {
       await sleep(header * 1000)
       return execute(url, method, body, attempt + 1)
