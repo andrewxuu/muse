@@ -20,8 +20,9 @@ export default function MoodWeekChart({ days }) {
               {checkIn ? (
                 <span style={{ height: checkIn.score * 44 }} className={`w-full rounded-b-[2px] rounded-t-md ${moodBg[checkIn.mood]}`} />
               ) : (
-                <span className="flex h-[44px] w-full items-center justify-center rounded-md border border-dashed border-line text-[11px] text-hint">
-                  No check-in
+                <span className="flex h-[44px] w-full items-center justify-center overflow-hidden rounded-md border border-dashed border-line px-0.5 text-center text-[11px] leading-tight text-hint">
+                  <span aria-hidden="true" className="sm:hidden">–</span>
+                  <span aria-hidden="true" className="hidden sm:inline">No check-in</span>
                 </span>
               )}
             </button>

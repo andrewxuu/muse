@@ -123,12 +123,12 @@ function Muse() {
     <div className="flex h-dvh bg-cream">
       <Sidebar page={page} onNavigate={navigate} onOpenSettings={() => setSettingsOpen(true)} />
       <main
-        className={`flex min-w-0 flex-1 flex-col md:pb-0 ${
+        className={`relative flex min-w-0 flex-1 flex-col md:pb-0 ${
           playerVisible ? 'pb-[calc(8rem+env(safe-area-inset-bottom))]' : 'pb-[calc(3.5rem+env(safe-area-inset-bottom))]'
         }`}
       >
         <MobileHeader onOpenSettings={() => setSettingsOpen(true)} />
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto pt-16 md:pt-0">
           <div key={`${dev.on}-${dev.sample}`} className="mx-auto h-full max-w-[1680px]">
             {pages[page]}
           </div>

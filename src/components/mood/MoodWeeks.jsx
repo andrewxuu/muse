@@ -10,16 +10,18 @@ export default function MoodWeeks({ monthStart }) {
 
   return (
     <div ref={ref} className="relative flex flex-col gap-2">
-      <div className="flex h-[220px] items-end gap-4 px-1.5">
+      <div className="flex h-[220px] items-end gap-2 px-1.5 sm:gap-4">
         {weeks.map((week, i) => {
           const avg = weekAverage(week)
           if (!avg) {
             return (
               <div
                 key={i}
-                className="flex h-[44px] flex-1 items-center justify-center rounded-md border border-dashed border-line text-[11px] text-hint"
+                className="flex h-[44px] min-w-0 flex-1 items-center justify-center overflow-hidden rounded-md border border-dashed border-line px-0.5 text-center text-[11px] leading-tight text-hint"
               >
-                {weekIsUpcoming(week) ? 'Upcoming' : 'No check-ins'}
+                <span className="sr-only">{weekIsUpcoming(week) ? 'Upcoming' : 'No check-ins'}</span>
+                <span aria-hidden="true" className="sm:hidden">–</span>
+                <span aria-hidden="true" className="hidden sm:inline">{weekIsUpcoming(week) ? 'Upcoming' : 'No check-ins'}</span>
               </div>
             )
           }
@@ -38,13 +40,13 @@ export default function MoodWeeks({ monthStart }) {
           )
         })}
       </div>
-      <div className="flex gap-4 px-1.5 text-center text-xs text-muted">
+      <div className="flex gap-2 px-1.5 text-center text-xs text-muted sm:gap-4">
         {weeks.map((week, i) => {
           const days = week.filter(Boolean)
           return (
-            <div key={i} className="flex-1">
+            <div key={i} className="min-w-0 flex-1">
               <p className="font-semibold text-ink">Week {i + 1}</p>
-              <p className="mt-0.5">
+              <p className="mt-0.5 text-[11px] sm:text-xs">
                 {shortDate(days[0].date)}–{days.at(-1).date.getDate()}
               </p>
             </div>

@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Funnel } from 'lucide-react'
 
+const MENU_WIDTH = 200
+const EDGE = 8
+const ROW_HEIGHT = 40
+const BOTTOM_GAP = 96
+
 export default function SourceFilter({ options, value, onChange, icon: Icon = Funnel }) {
   const [open, setOpen] = useState(false)
+  const [place, setPlace] = useState({ left: false, up: false })
   const wrap = useRef(null)
 
   useEffect(() => {
@@ -17,6 +23,18 @@ export default function SourceFilter({ options, value, onChange, icon: Icon = Fu
     }
   }, [open])
 
+  const toggle = () => {
+    if (!open && wrap.current) {
+      const box = wrap.current.getBoundingClientRect()
+      const height = options.length * ROW_HEIGHT + 16
+      setPlace({
+        left: box.right - MENU_WIDTH < EDGE,
+        up: box.bottom + height > window.innerHeight - BOTTOM_GAP && box.top > height,
+      })
+    }
+    setOpen((o) => !o)
+  }
+
   const pick = (id) => {
     onChange(id)
     setOpen(false)
@@ -28,7 +46,7 @@ export default function SourceFilter({ options, value, onChange, icon: Icon = Fu
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         className="flex h-12 items-center gap-1.5 rounded-[14px] border border-teal bg-teal-soft px-3.5 text-sm font-semibold text-teal"
       >
         <Icon size={15} aria-hidden="true" />
@@ -37,7 +55,12 @@ export default function SourceFilter({ options, value, onChange, icon: Icon = Fu
       </button>
 
       {open && (
-        <div role="menu" className="absolute right-0 top-full z-20 mt-2 w-[200px] rounded-xl border border-line bg-surface p-1.5 shadow-lg">
+        <div
+          role="menu"
+          className={`absolute z-30 w-[200px] max-w-[calc(100vw-1rem)] rounded-xl border border-line bg-surface p-1.5 shadow-lg ${
+            place.left ? 'left-0' : 'right-0'
+          } ${place.up ? 'bottom-full mb-2' : 'top-full mt-2'}`}
+        >
           {options.map((o) => {
             const selected = value === o.id
             return (
