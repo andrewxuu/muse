@@ -1,5 +1,6 @@
 import { getArtistTags, getTrackTags } from '../services/lastfm'
 import { escapeRegExp, firstArtist, wordPattern } from './filters'
+import { getBaseline, personalize } from './baseline'
 
 export const MODES = { match: 'Match my mood', lift: 'Ease my stress' }
 
@@ -70,7 +71,16 @@ export const targets = Object.fromEntries(Object.entries(STATES).map(([name, s])
 const LEGACY = { Hype: 'Stressed', Sad: 'Very stressed', Focus: 'Meh', 'Some stress': 'Meh', Happy: 'Relaxed' }
 export const canonMood = (mood) => (mood in STATES ? mood : (LEGACY[mood] ?? null))
 export const stateOf = (mood) => STATES[canonMood(mood)]
-export const targetOf = (mood) => stateOf(mood)?.target
+
+const personal = (name) => {
+  const baseline = getBaseline()
+  return baseline ? personalize(STATES[name].target, STATES.Meh.target, baseline) : STATES[name].target
+}
+
+export const targetOf = (mood) => {
+  const key = canonMood(mood)
+  return key ? personal(key) : undefined
+}
 export const mixName = (mood) => `${stateOf(mood)?.mix ?? 'Mood'} mix`
 
 const CENTERS = [1.5, 3.5, 5.5, 7.5, 9.5]
@@ -120,8 +130,8 @@ export function stateFor({ stress, hour = new Date().getHours(), recent = [] }) 
   const mood = MOOD_NAMES[Math.min(4, Math.floor((s - 1) / 2))]
   const low = clamp(Math.floor((s - CENTERS[0]) / 2), 0, 3)
   const t = clamp((s - CENTERS[low]) / 2, 0, 1)
-  const blended = lerp(STATES[MOOD_NAMES[low]].target, STATES[MOOD_NAMES[low + 1]].target, t)
-  const eased = lerp(blended, STATES[STATES[mood].lift].target, EASE)
+  const blended = lerp(personal(MOOD_NAMES[low]), personal(MOOD_NAMES[low + 1]), t)
+  const eased = lerp(blended, personal(STATES[mood].lift), EASE)
 
   const night = hour >= 22 || hour < 5
   const trend = trendOf(recent)
@@ -148,8 +158,19 @@ export function targetFor(mood, lifting, state) {
   const key = canonMood(mood)
   if (!key) return {}
   if (state?.mood === key) return lifting ? state.eased : state.target
-  const base = STATES[key].target
-  return lifting ? lerp(base, STATES[STATES[key].lift].target, EASE) : { ...base }
+  const base = personal(key)
+  return lifting ? lerp(base, personal(STATES[key].lift), EASE) : { ...base }
+}
+
+export function nearestMood(target) {
+  if (!target || !Object.keys(target).length) return null
+  let best = null
+  let bestGap = Infinity
+  for (const name of MOOD_NAMES) {
+    const gap = distance(personal(name), target)
+    if (gap < bestGap) [best, bestGap] = [name, gap]
+  }
+  return best
 }
 
 export const effectiveMood = (mood, lifting) => {
