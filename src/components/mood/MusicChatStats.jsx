@@ -17,7 +17,7 @@ function Bars({ title, rows, empty }) {
       {rows.length === 0 && <p className="text-[13px] text-muted">{empty}</p>}
       {rows.map(([name, n]) => (
         <div key={name} className="flex items-center gap-2.5 text-[13px]">
-          <span className="w-20 shrink-0 truncate">{titleCase(name)}</span>
+          <span title={titleCase(name)} className="w-24 shrink-0 truncate sm:w-28">{titleCase(name)}</span>
           <span className="h-2 flex-1 rounded-full bg-track">
             <span className="block h-2 rounded-full bg-teal" style={{ width: `${(n / max) * 100}%` }} />
           </span>

@@ -37,13 +37,13 @@ export default function ChatDayPicker({ days, value, onChange, stressOf = () => 
   }
 
   return (
-    <div ref={wrap} className="relative">
+    <div ref={wrap} className="relative shrink-0">
       <button
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-9 items-center gap-1.5 rounded-full border border-line bg-surface px-3.5 text-sm text-ink hover:border-teal"
+        className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-surface px-3.5 text-sm text-ink hover:border-teal"
       >
         {dayName(current.date)}
         <span className="h-4 w-px bg-line" aria-hidden="true" />
@@ -66,7 +66,7 @@ export default function ChatDayPicker({ days, value, onChange, stressOf = () => 
                   selected ? 'bg-teal-soft font-semibold' : 'hover:bg-cream'
                 }`}
               >
-                <span className="flex-1">{dayName(d.date)}</span>
+                <span className="flex-1 whitespace-nowrap">{dayName(d.date)}</span>
                 <StressDot mood={stressOf(d.date)} />
               </button>
             )

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { dayTip, useChartTooltip, weekTip } from '../ui/ChartTooltip'
 import { buildWeeks, moodLabel, scoreMood, startOfToday, weekAverage } from '../../lib/moodMonth'
 
@@ -9,9 +10,10 @@ const moodFill = {
   awful: 'fill-mood-awful',
 }
 
-const W = 720
 const H = 220
-const LEFT = 88
+const MIN_WIDTH = 260
+const LEFT = 78
+const FONT = 11
 const TOP = 8
 const BOTTOM = 22
 const y = (score) => TOP + (H - TOP - BOTTOM) * (1 - score / 5)
@@ -20,18 +22,29 @@ export default function MoodDaily({ monthStart }) {
   const today = startOfToday()
   const weeks = buildWeeks(monthStart, today)
   const days = weeks.flat().filter(Boolean)
+  const { ref, bind, tooltip } = useChartTooltip()
+  const [width, setWidth] = useState(720)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const watch = new ResizeObserver(([entry]) => setWidth(Math.max(MIN_WIDTH, Math.round(entry.contentRect.width))))
+    watch.observe(el)
+    return () => watch.disconnect()
+  }, [ref])
+
+  const W = width
   const slot = (W - LEFT) / days.length
   const x = (day) => LEFT + (day - 1) * slot
   const ticks = [1, 8, 15, 22, 29].filter((d) => d <= days.length)
-  const { ref, bind, tooltip } = useChartTooltip()
 
   return (
     <div ref={ref} className="relative">
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="Daily stress with weekly average line">
+    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block h-auto w-full" role="img" aria-label="Daily stress with weekly average line">
       {[1, 2, 3, 4, 5].map((score) => (
         <g key={score}>
           <line x1={LEFT} x2={W} y1={y(score)} y2={y(score)} strokeWidth="1" className="stroke-track" />
-          <text x="0" y={y(score) + 4} fontSize="11" className="fill-muted">
+          <text x="0" y={y(score) + 4} fontSize={FONT} className="fill-muted">
             {moodLabel(scoreMood[score])}
           </text>
         </g>
@@ -98,7 +111,7 @@ export default function MoodDaily({ monthStart }) {
       })}
 
       {ticks.map((d) => (
-        <text key={d} x={x(d) + slot / 2} y={H - 6} fontSize="11" textAnchor="middle" className="fill-muted">
+        <text key={d} x={x(d) + slot / 2} y={H - 6} fontSize={FONT} textAnchor="middle" className="fill-muted">
           {d}
         </text>
       ))}
