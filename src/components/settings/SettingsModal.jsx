@@ -6,6 +6,7 @@ import Toggle from '../ui/Toggle'
 import { useSpotify } from '../../spotify/useSpotify'
 import { useTheme } from '../../theme'
 import { useAccount } from '../../account'
+import { useSettings } from '../../lib/settingsPrefs'
 import { setDevMode, setSampleData, useDevMode } from '../../lib/devMode'
 
 const themes = [
@@ -37,6 +38,51 @@ function ToggleRow({ title, detail, checked, onChange }) {
   )
 }
 
+function SignInMethods() {
+  const { providers, linkProvider } = useAccount()
+  const [error, setError] = useState('')
+
+  const link = async (id) => {
+    setError('')
+    try {
+      await linkProvider(id)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  return (
+    <Group title="Sign in methods">
+      <Card>
+        {[
+          ['google', 'Google'],
+          ['spotify', 'Spotify'],
+        ].map(([id, label]) => {
+          const linked = providers.includes(id)
+          return (
+            <div key={id} className="flex items-center gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[15px] font-semibold">{label}</p>
+                <p className="mt-0.5 text-[13px] text-muted">{linked ? 'Linked' : 'Not linked'}</p>
+              </div>
+              {!linked && (
+                <button type="button" onClick={() => link(id)} className="h-9 rounded-full border border-line px-4 text-sm hover:border-teal">
+                  Link
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </Card>
+      {error && (
+        <p role="alert" className="text-[13px] text-danger">
+          {error}
+        </p>
+      )}
+    </Group>
+  )
+}
+
 export default function SettingsModal({ onClose, onLogOut }) {
   const { status, profile, connect, disconnect } = useSpotify()
   const { user, guest, name: accountName, startReplay } = useAccount()
@@ -47,8 +93,7 @@ export default function SettingsModal({ onClose, onLogOut }) {
   const [devNote, setDevNote] = useState('')
 
   const { theme, setTheme } = useTheme()
-  const [prefs, setPrefs] = useState({ reminder: true, suggestions: true, listening: true, chatHistory: false })
-  const setPref = (key) => (value) => setPrefs((p) => ({ ...p, [key]: value }))
+  const { prefs, setPref } = useSettings()
 
   useEffect(() => {
     const opener = document.activeElement
@@ -149,6 +194,8 @@ export default function SettingsModal({ onClose, onLogOut }) {
             )}
           </Card>
         </Group>
+
+        {user && <SignInMethods />}
 
         <Group title="Appearance">
           <div role="radiogroup" aria-label="Theme" className="flex gap-1 rounded-[14px] bg-track p-1">

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAccount } from '../../account'
 import Logo from '../ui/Logo'
+import SocialButtons from './SocialButtons'
 
 const primary = 'h-11 w-full rounded-[14px] bg-teal px-5 text-[15px] font-semibold text-white disabled:opacity-60'
 const secondary = 'h-11 w-full rounded-[14px] border border-line px-5 text-[15px] font-semibold hover:border-teal'
@@ -22,7 +23,7 @@ function Field({ label, type = 'text', value, onChange, autoComplete, placeholde
 }
 
 export default function AuthForm({ initialMode = 'create', onDone }) {
-  const { enabled, signUp, signIn, continueAsGuest } = useAccount()
+  const { enabled, oauthError, signUp, signIn, continueAsGuest } = useAccount()
   const [mode, setMode] = useState(initialMode)
   const [form, setForm] = useState({ name: '', email: '', password: '' })
   const [error, setError] = useState('')
@@ -91,6 +92,8 @@ export default function AuthForm({ initialMode = 'create', onDone }) {
         </p>
       )}
 
+      <SocialButtons onError={setError} />
+
       {creating && <Field label="Name" value={form.name} onChange={set('name')} autoComplete="name" placeholder="Your name" />}
       <Field label="Email" type="email" value={form.email} onChange={set('email')} autoComplete="email" placeholder="you@email.com" />
       <Field
@@ -102,9 +105,9 @@ export default function AuthForm({ initialMode = 'create', onDone }) {
         placeholder={creating ? '8+ characters' : 'Your password'}
       />
 
-      {error && (
+      {(error || oauthError) && (
         <p role="alert" className="text-[14px] text-danger">
-          {error}
+          {error || oauthError}
         </p>
       )}
 

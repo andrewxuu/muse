@@ -1,9 +1,35 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
-import { pullCloud, pushAll, setSyncUser } from './lib/cloudSync'
-import { DONE_KEY, GUEST_KEY, STEP_KEY, SYNCED_KEYS, readKey, removeKey, writeKey } from './lib/storageKeys'
+import { cloudPush, pullCloud, pushAll, setSyncUser } from './lib/cloudSync'
+import { DONE_KEY, GUEST_KEY, PROVIDER_KEY, STEP_KEY, SYNCED_KEYS, readKey, removeKey, writeKey } from './lib/storageKeys'
+import { hasToken, login as connectSpotify } from './spotify/auth'
+import { googleClientId, startGoogle, takeGoogleResult } from './lib/googleSignIn'
 
 const AccountContext = createContext(null)
+
+const redirectUrl = () => `${window.location.origin}${import.meta.env.BASE_URL}`
+
+const readOAuthError = () => {
+  const params = new URLSearchParams(window.location.hash.slice(1) || window.location.search)
+  return params.get('error_description') ?? ''
+}
+
+let googleDone = null
+
+const completeGoogle = () => {
+  googleDone ??= (async () => {
+    const google = takeGoogleResult()
+    if (!google) return null
+    if (!google.token) return { error: google.error }
+    const { data } = await supabase.auth.getSession()
+    const credentials = { provider: 'google', token: google.token, nonce: google.nonce }
+    const linking = google.intent === 'link' && data.session
+    const { error } = linking ? await supabase.auth.linkIdentity(credentials) : await supabase.auth.signInWithIdToken(credentials)
+    if (error) return { error: error.message }
+    return { provider: linking ? null : 'google', refresh: true }
+  })()
+  return googleDone
+}
 
 export function AccountProvider({ children }) {
   const [session, setSession] = useState(null)
@@ -11,26 +37,47 @@ export function AccountProvider({ children }) {
   const [guest, setGuest] = useState(() => readKey(GUEST_KEY) === '1')
   const [onboarded, setOnboarded] = useState(() => readKey(DONE_KEY) === '1')
   const [replay, setReplay] = useState(false)
+  const [oauthError, setOauthError] = useState(readOAuthError)
 
   useEffect(() => {
     if (!supabase) return
     let live = true
+    if (readOAuthError()) window.history.replaceState(null, '', window.location.pathname)
 
     const start = async () => {
       let current = null
+      let chainSpotify = false
+      let provider = readKey(PROVIDER_KEY)
       try {
+        const google = await completeGoogle()
+        if (google?.error && live) setOauthError(google.error)
+        if (google?.provider) provider = google.provider
         const { data } = await supabase.auth.getSession()
         current = data.session
+        if (current && google?.refresh) {
+          const { data: me } = await supabase.auth.getUser()
+          if (me?.user) current = { ...current, user: me.user }
+        }
         if (current) {
           await pullCloud(current.user.id).catch(() => {})
           setSyncUser(current.user.id)
+          if (provider && live) {
+            const done = readKey(DONE_KEY) === '1'
+            if (!done) writeKey(STEP_KEY, provider === 'spotify' ? 'genres' : 'spotify')
+            removeKey(GUEST_KEY)
+            setGuest(false)
+            setOnboarded(done)
+            chainSpotify = provider === 'spotify' && !hasToken()
+          }
         }
       } finally {
         if (live) {
+          removeKey(PROVIDER_KEY)
           setSession(current)
           setReady(true)
         }
       }
+      if (chainSpotify && live) connectSpotify().catch(() => {})
     }
     start()
 
@@ -81,6 +128,24 @@ export function AccountProvider({ children }) {
     setSession(data.session)
   }, [])
 
+  const signInWithProvider = useCallback(async (provider) => {
+    if (!supabase) throw new Error('Accounts aren’t set up yet. Add your Supabase keys to .env.local.')
+    setOauthError('')
+    if (provider === 'google' && googleClientId) return startGoogle('signin')
+    writeKey(PROVIDER_KEY, provider)
+    const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: redirectUrl() } })
+    if (error) {
+      removeKey(PROVIDER_KEY)
+      throw error
+    }
+  }, [])
+
+  const linkProvider = useCallback(async (provider) => {
+    if (provider === 'google' && googleClientId) return startGoogle('link')
+    const { error } = await supabase.auth.linkIdentity({ provider, options: { redirectTo: redirectUrl() } })
+    if (error) throw error
+  }, [])
+
   const signOut = useCallback(async () => {
     if (supabase && session) {
       await supabase.auth.signOut()
@@ -101,6 +166,7 @@ export function AccountProvider({ children }) {
 
   const finishOnboarding = useCallback(() => {
     writeKey(DONE_KEY, '1')
+    cloudPush('onboarded', true)
     removeKey(STEP_KEY)
     setOnboarded(true)
     setReplay(false)
@@ -121,14 +187,18 @@ export function AccountProvider({ children }) {
       guest,
       onboarded,
       replay,
+      oauthError,
+      providers: user?.identities?.map((i) => i.provider) ?? [],
       signUp,
       signIn,
+      signInWithProvider,
+      linkProvider,
       signOut,
       continueAsGuest,
       finishOnboarding,
       startReplay,
     }),
-    [ready, user, guest, onboarded, replay, signUp, signIn, signOut, continueAsGuest, finishOnboarding, startReplay]
+    [ready, user, guest, onboarded, replay, oauthError, signUp, signIn, signInWithProvider, linkProvider, signOut, continueAsGuest, finishOnboarding, startReplay]
   )
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>
