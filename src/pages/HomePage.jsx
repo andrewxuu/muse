@@ -1,12 +1,13 @@
 import { useSpotify } from '../spotify/useSpotify'
 import { useState } from 'react'
-import { CircleCheck } from 'lucide-react'
+import { CircleCheck, Plus } from 'lucide-react'
 import StressFace from '../components/ui/StressFace'
 import { ratingMood, stressLabel, stressValue, useRatings } from '../ratings'
 import SongRow from '../components/songs/SongRow'
 import PlaylistDetail from './PlaylistDetail'
 import PlaylistPick from '../components/playlists/PlaylistPick'
 import { stateFor } from '../lib/moodTags'
+import { SkeletonSongRow, SkeletonTile } from '../components/ui/Skeleton'
 
 function greetingFor(hour) {
   if (hour < 5) return 'Up late'
@@ -123,7 +124,12 @@ function MoodRating({ onNavigate }) {
             className="w-full resize-none rounded-[10px] border border-line bg-surface px-3 py-2 text-sm outline-none placeholder:text-hint focus:border-teal"
           />
           <div className="flex items-center justify-between gap-3">
-            <button type="button" onClick={logAnother} className="text-sm font-semibold text-teal underline">
+            <button
+              type="button"
+              onClick={logAnother}
+              className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-teal-soft px-3.5 text-sm font-semibold text-teal hover:brightness-95"
+            >
+              <Plus size={16} strokeWidth={2.5} aria-hidden="true" />
               Log another check-in
             </button>
             {noteSaved ? (
@@ -184,10 +190,17 @@ function RecentlySaved({ savedSongs, isSaved, onSave, onOpenLiked }) {
             <SongRow key={`${song.source}-${song.id}`} song={song} saved={isSaved(song.id)} onSave={onSave} />
           ))}
         </div>
+      ) : status === 'syncing' ? (
+        <div className="flex flex-col gap-3">
+          <p role="status" className="sr-only">
+            Loading your saved songs
+          </p>
+          {Array.from({ length: 4 }, (_, i) => (
+            <SkeletonSongRow key={i} index={i} />
+          ))}
+        </div>
       ) : (
-        <p className="text-sm text-muted">
-          {status === 'syncing' ? 'Loading your saved songs…' : 'Save songs in chat or connect Spotify to fill this list.'}
-        </p>
+        <p className="text-sm text-muted">Save songs in chat or connect Spotify to fill this list.</p>
       )}
     </Section>
   )
@@ -198,12 +211,7 @@ function YourPlaylists({ onNavigate, onOpenPlaylist }) {
   const lists = playlists.slice(0, 4)
   const needsSpotify = status === 'disconnected' || status === 'expired'
 
-  const empty =
-    status === 'syncing'
-      ? 'Loading your playlists…'
-      : needsSpotify
-        ? 'Connect Spotify to see your playlists here.'
-        : 'Your Spotify account doesn’t have any playlists yet.'
+  const empty = needsSpotify ? 'Connect Spotify to see your playlists here.' : 'Your Spotify account doesn’t have any playlists yet.'
 
   return (
     <Section title="Your playlists" aside={lists.length > 0 && <SeeAll onClick={() => onNavigate('playlists')} />}>
@@ -219,6 +227,15 @@ function YourPlaylists({ onNavigate, onOpenPlaylist }) {
               <p className="mt-2 truncate text-sm font-semibold">{p.name}</p>
               {p.count !== null && <p className="mt-0.5 text-xs text-muted">{p.count} songs</p>}
             </button>
+          ))}
+        </div>
+      ) : status === 'syncing' ? (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <p role="status" className="sr-only">
+            Loading your playlists
+          </p>
+          {Array.from({ length: 4 }, (_, i) => (
+            <SkeletonTile key={i} />
           ))}
         </div>
       ) : (

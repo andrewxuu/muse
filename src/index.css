@@ -105,3 +105,54 @@ body {
     }
   }
 }
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: rgb(var(--c-track));
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(var(--c-surface) / 0.65), transparent);
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    display: none;
+  }
+  .skeleton {
+    animation: skeleton-fade 1.8s ease-in-out infinite;
+  }
+  @keyframes skeleton-fade {
+    50% {
+      opacity: 0.6;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tile-ripple {
+    animation: tile-ripple 0.45s ease-out both;
+  }
+}
+
+@keyframes tile-ripple {
+  0%,
+  100% {
+    transform: none;
+  }
+  40% {
+    transform: translateY(-4px) scale(1.03);
+  }
+}

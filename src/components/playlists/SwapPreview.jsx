@@ -3,6 +3,7 @@ import { Check, Minus, Plus } from 'lucide-react'
 import AlbumArt from '../songs/AlbumArt'
 import SpotifyError from './SpotifyError'
 import { matchPercent, swapFit } from '../../lib/playlistMood'
+import { Spinner } from '../ui/Skeleton'
 
 function Row({ song, d, tag, icon: Icon, tone }) {
   const fit = matchPercent(d)
@@ -18,7 +19,7 @@ function Row({ song, d, tag, icon: Icon, tone }) {
         </p>
         <p className="truncate text-[13px] text-muted">{song.artist}</p>
       </div>
-      <span className={`flex items-center gap-1 text-[13px] tabular-nums ${tone}`}>
+      <span className={`flex shrink-0 items-center gap-1 text-[13px] tabular-nums ${tone}`}>
         <Icon size={13} aria-hidden="true" />
         {fit}%
       </span>
@@ -64,14 +65,14 @@ export default function SwapPreview({ plan, moodLabel, onApply, onCancel }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
       onMouseDown={(e) => e.target === e.currentTarget && !busy && onCancel()}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="swap-title"
-        className="flex max-h-[90vh] w-full max-w-[760px] flex-col gap-4 overflow-y-auto rounded-[20px] bg-surface p-5 sm:p-6"
+        className="flex max-h-[92dvh] w-full max-w-[760px] flex-col gap-4 rounded-t-[20px] bg-surface p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:max-h-[90dvh] sm:rounded-[20px] sm:p-6"
       >
         <div className="flex flex-col gap-1.5">
           <h2 id="swap-title" className="font-serif text-[22px] font-semibold">
@@ -80,42 +81,43 @@ export default function SwapPreview({ plan, moodLabel, onApply, onCancel }) {
           <p className="text-[15px] text-muted">Uncheck any pair to keep that song. Nothing changes on Spotify until you apply.</p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="flex flex-col gap-1 rounded-[14px] border border-line p-3">
-            <p className="mb-1 text-[13px] text-muted">Leaving</p>
-            {plan.pairs.map((p) => (
-              <div key={p.id} className="flex items-center gap-2.5 border-t border-line py-2 first:border-t-0">
-                <button
-                  type="button"
-                  role="checkbox"
-                  aria-checked={chosen.has(p.id)}
-                  aria-label={`Swap ${p.out.song.title}`}
-                  onClick={() => toggle(p.id)}
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${chosen.has(p.id) ? 'border-teal bg-teal text-white' : 'border-line bg-surface'}`}
-                >
-                  {chosen.has(p.id) && <Check size={13} aria-hidden="true" />}
-                </button>
-                <div className={`min-w-0 flex-1 ${chosen.has(p.id) ? '' : 'opacity-50'}`}>
-                  <Row song={p.out.song} d={p.out.d} icon={Minus} tone="text-danger" />
+        <div className="-mb-2 hidden grid-cols-2 gap-4 px-3 text-[13px] text-muted sm:grid">
+          <p>Leaving</p>
+          <p>Coming in</p>
+        </div>
+
+        <div className="min-h-0 flex-1 divide-y divide-line overflow-y-auto rounded-[14px] border border-line px-3">
+          {plan.pairs.map((p) => {
+            const on = chosen.has(p.id)
+            return (
+              <div key={p.id} className="grid gap-2 py-3 sm:grid-cols-2 sm:gap-4">
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={on}
+                    aria-label={`Swap ${p.out.song.title}`}
+                    onClick={() => toggle(p.id)}
+                    className={`flex size-6 shrink-0 items-center justify-center rounded-md border ${on ? 'border-teal bg-teal text-white' : 'border-line bg-surface'}`}
+                  >
+                    {on && <Check size={14} aria-hidden="true" />}
+                  </button>
+                  <div className={`min-w-0 flex-1 ${on ? '' : 'opacity-50'}`}>
+                    <Row song={p.out.song} d={p.out.d} icon={Minus} tone="text-danger" />
+                  </div>
+                </div>
+                <div className={`pl-[34px] sm:pl-0 ${on ? '' : 'opacity-50'}`}>
+                  <Row song={p.inn.song} d={p.inn.d} tag={p.inn.tag} icon={Plus} tone="text-teal" />
                 </div>
               </div>
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-1 rounded-[14px] border border-line p-3">
-            <p className="mb-1 text-[13px] text-muted">Coming in</p>
-            {plan.pairs.map((p) => (
-              <div key={p.id} className={`border-t border-line py-2 first:border-t-0 ${chosen.has(p.id) ? '' : 'opacity-50'}`}>
-                <Row song={p.inn.song} d={p.inn.d} tag={p.inn.tag} icon={Plus} tone="text-teal" />
-              </div>
-            ))}
-          </div>
+            )
+          })}
         </div>
 
         <SpotifyError error={error} />
 
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <p className="mr-auto text-[13px] text-muted">
+        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+          <p className="w-full text-[13px] text-muted sm:mr-auto sm:w-auto">
             Playlist fit goes from {fit.before}% to {fit.after}%
           </p>
           <button
@@ -123,7 +125,7 @@ export default function SwapPreview({ plan, moodLabel, onApply, onCancel }) {
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="h-10 rounded-full border border-line px-4 text-[15px] font-semibold hover:border-teal"
+            className="h-11 flex-1 rounded-full border border-line px-4 text-[15px] font-semibold hover:border-teal sm:h-10 sm:flex-none"
           >
             Cancel
           </button>
@@ -131,8 +133,9 @@ export default function SwapPreview({ plan, moodLabel, onApply, onCancel }) {
             type="button"
             onClick={apply}
             disabled={busy || !chosen.size}
-            className="h-10 rounded-full bg-teal px-4 text-[15px] font-semibold text-white disabled:opacity-60"
+            className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full bg-teal px-4 text-[15px] font-semibold text-white disabled:opacity-60 sm:h-10 sm:flex-none"
           >
+            {busy && <Spinner />}
             {busy ? 'Updating…' : 'Apply swap'}
           </button>
         </div>
