@@ -1,14 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { hasToken, login, logout, ReconnectError } from './auth'
-import { addTracks, createPlaylist as createPlaylistRequest, getLikedSongs, getListening, getPlaylists, getProfile, likeTrack, removeTracks, unlikeTrack, deletePlaylist, restorePlaylist, cooldownLeft } from './api'
+import { addTracks, createPlaylist as createPlaylistRequest, getListening, getPlaylists, getProfile, likeTrack, removeTracks, unlikeTrack, deletePlaylist, restorePlaylist, cooldownLeft } from './api'
 import { playlistCache } from '../lib/playlistCache'
+import { getBaseline, refreshBaseline, setBaseline } from '../lib/baseline'
+import { useAccount } from '../account'
+import { loadLikedSongs, removeLikedSong, saveLikedSong } from '../lib/likedSync'
 
 const SpotifyContext = createContext(null)
 const empty = { profile: null, liked: [], playlists: [], listening: [] }
 
 const CACHE_KEY = 'moodbot:spotify-cache'
 const CACHE_MS = 30 * 60 * 1000
-const FIRST_LIKED = 100
+const FIRST_LIKED = 500
 
 const readCache = (stale = false) => {
   try {
@@ -36,11 +39,15 @@ const clearCache = () => {
 }
 
 export function SpotifyProvider({ children }) {
+  const { user } = useAccount()
+  const userId = user?.id ?? null
   const [status, setStatus] = useState(hasToken() ? 'syncing' : 'disconnected')
   const [data, setData] = useState(empty)
   const [error, setError] = useState(null)
+  const [likedLoad, setLikedLoad] = useState(null)
   const inFlight = useRef(false)
   const meta = useRef({ at: 0, full: false })
+  const [, setBaselineState] = useState(getBaseline)
 
   const applyCache = useCallback(
     (cached) => {
@@ -81,28 +88,36 @@ export function SpotifyProvider({ children }) {
         const [profile, playlists] = await Promise.all([getProfile(), getPlaylists()])
         setData((prev) => ({ ...prev, profile, playlists }))
         setStatus('connected')
+        setLikedLoad({ have: 0, total: 0 })
 
-        const [liked, listening] = await Promise.allSettled([getLikedSongs(FIRST_LIKED), getListening()])
+        const [liked, listening] = await Promise.allSettled([loadLikedSongs(userId, FIRST_LIKED, (have, total) => setLikedLoad({ have, total })), getListening()])
         const failed = [liked, listening].find((r) => r.status === 'rejected')
         if (failed?.reason instanceof ReconnectError) throw failed.reason
 
         const parts = {}
-        if (liked.status === 'fulfilled') parts.liked = liked.value
+        if (liked.status === 'fulfilled') parts.liked = liked.value.songs
         if (listening.status === 'fulfilled') parts.listening = listening.value
         if (failed) setError(failed.reason.message)
-        else meta.current = { at: Date.now(), full: liked.value.length < FIRST_LIKED }
+        else meta.current = { at: Date.now(), full: liked.value.full }
         setData((prev) => ({ ...prev, ...parts }))
       } catch (err) {
         setError(err.message)
         setStatus(err instanceof ReconnectError ? 'expired' : 'error')
       } finally {
+        setLikedLoad(null)
         inFlight.current = false
       }
     },
-    [applyCache]
+    [applyCache, userId]
   )
 
   const sync = useCallback(() => load(true), [load])
+
+  useEffect(() => {
+    const top = data.listening.filter((s) => s.top)
+    if (status !== 'connected' || !top.length) return
+    refreshBaseline({ medium: top }).then((next) => next && setBaselineState(next))
+  }, [data.listening, status])
 
   useEffect(() => {
     if (status === 'connected' && meta.current.at) writeCache(data, meta.current.at, meta.current.full)
@@ -162,19 +177,21 @@ export function SpotifyProvider({ children }) {
     try {
       await likeTrack(song.id)
       setData((prev) => (prev.liked.some((s) => s.id === song.id) ? prev : { ...prev, liked: [song, ...prev.liked] }))
+      saveLikedSong(userId, song)
     } catch (err) {
       setError(err.code === 'scope' ? 'Reconnect Spotify to sync liked songs.' : err.message)
     }
-  }, [])
+  }, [userId])
 
   const unlikeSong = useCallback(async (song) => {
     try {
       await unlikeTrack(song.id)
       setData((prev) => ({ ...prev, liked: prev.liked.filter((s) => s.id !== song.id) }))
+      removeLikedSong(userId, song.id)
     } catch (err) {
       setError(err.code === 'scope' ? 'Reconnect Spotify to sync liked songs.' : err.message)
     }
-  }, [])
+  }, [userId])
 
   const addToPlaylist = useCallback((playlistId, song) => addSongs(playlistId, [song]), [addSongs])
 
@@ -187,6 +204,8 @@ export function SpotifyProvider({ children }) {
   const disconnect = useCallback(() => {
     clearCache()
     logout()
+    setBaseline(null)
+    setBaselineState(null)
     setData(empty)
     setError(null)
     setStatus('disconnected')
@@ -197,7 +216,7 @@ export function SpotifyProvider({ children }) {
   }, [load])
 
   return (
-    <SpotifyContext.Provider value={{ status, error, ...data, sync, connect, disconnect, createPlaylist, addToPlaylist, addSongs, removeSong, likeSong, unlikeSong, removePlaylists, restorePlaylists }}>
+    <SpotifyContext.Provider value={{ status, error, likedLoad, ...data, sync, connect, disconnect, createPlaylist, addToPlaylist, addSongs, removeSong, likeSong, unlikeSong, removePlaylists, restorePlaylists }}>
       {children}
     </SpotifyContext.Provider>
   )
