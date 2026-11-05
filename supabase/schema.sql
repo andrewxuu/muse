@@ -136,3 +136,46 @@ create policy "Signed in users add features"
 
 grant select, insert, update, delete on public.mood_checkins, public.chat_days, public.song_feedback, public.shown_songs, public.liked_songs to authenticated;
 grant select, insert on public.song_features to authenticated;
+
+create table if not exists public.spotify_cache (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  key text not null,
+  data jsonb not null,
+  fetched_at timestamptz not null default now(),
+  primary key (user_id, key)
+);
+
+create table if not exists public.track_lookup (
+  key text primary key,
+  song jsonb,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.spotify_cache enable row level security;
+alter table public.track_lookup enable row level security;
+
+drop policy if exists "Own rows" on public.spotify_cache;
+create policy "Own rows" on public.spotify_cache for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "Anyone reads track lookups" on public.track_lookup;
+create policy "Anyone reads track lookups"
+  on public.track_lookup for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Signed in users add track lookups" on public.track_lookup;
+create policy "Signed in users add track lookups"
+  on public.track_lookup for insert
+  to authenticated
+  with check (true);
+
+drop policy if exists "Signed in users update track lookups" on public.track_lookup;
+create policy "Signed in users update track lookups"
+  on public.track_lookup for update
+  to authenticated
+  using (true)
+  with check (true);
+
+grant select, insert, update, delete on public.spotify_cache to authenticated;
+grant select on public.track_lookup to anon, authenticated;
+grant insert, update on public.track_lookup to authenticated;

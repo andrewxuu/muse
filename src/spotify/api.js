@@ -1,5 +1,6 @@
 import { getAccessToken, logout, ReconnectError } from './auth'
 import { normalize } from '../lib/filters'
+import { forgetSaved, loadSaved, lookupTrack, saveData, saveTrack } from '../lib/spotifyStore'
 
 const BASE = 'https://api.spotify.com/v1'
 
@@ -184,6 +185,7 @@ const toPlaylist = (p) => ({
   url: p.external_urls?.spotify,
   ownerId: p.owner?.id,
   collaborative: Boolean(p.collaborative),
+  snapshot: p.snapshot_id ?? null,
 })
 
 export async function getPlaylists(max = 100) {
@@ -242,18 +244,23 @@ async function playlistLibraryWrite(id, method) {
 export const deletePlaylist = (id) => playlistLibraryWrite(id, 'DELETE')
 export const restorePlaylist = (id) => playlistLibraryWrite(id, 'PUT')
 
+export const forgetPlaylist = (id) => forgetSaved(`playlist:${id}`).catch(() => {})
+
 export async function addTracks(playlistId, uris) {
   await write(`/playlists/${playlistId}/items`, { uris })
+  forgetPlaylist(playlistId)
 }
 
 export async function replaceTracks(playlistId, uris) {
   await write(`/playlists/${playlistId}/items`, { uris: uris.slice(0, 100) }, 'PUT')
   for (let i = 100; i < uris.length; i += 100) await addTracks(playlistId, uris.slice(i, i + 100))
+  forgetPlaylist(playlistId)
 }
 
 export async function removeTracks(playlistId, uris) {
   const items = uris.map((uri) => ({ uri }))
   await write(`/playlists/${playlistId}/items`, { items, tracks: items }, 'DELETE')
+  forgetPlaylist(playlistId)
 }
 
 export class NotOwnedError extends Error {
@@ -264,13 +271,17 @@ export class NotOwnedError extends Error {
 }
 
 export async function getPlaylistSongs(id, max = 500) {
+  const saved = await loadSaved(`playlist:${id}`).catch(() => null)
+  if (saved?.songs && (saved.complete || saved.songs.length >= max)) return saved.songs.slice(0, max)
   try {
     const items = await collect(`/playlists/${id}/items?limit=50`, max)
-    return items.flatMap((entry) => {
+    const songs = items.flatMap((entry) => {
       const track = entry?.item ?? entry?.track
       if (!track?.id || (track.type && track.type !== 'track')) return []
       return [{ ...toSong(track, 'spotify'), addedAt: entry.added_at ?? null }]
     })
+    saveData(`playlist:${id}`, { songs, complete: items.length < max }).catch(() => {})
+    return songs
   } catch (err) {
     if (err.status === 403 || err.status === 404) throw new NotOwnedError()
     throw err
@@ -341,7 +352,7 @@ export function searchTrack(title, artist) {
   if (!searchCache.has(key)) {
     searchCache.set(
       key,
-      searchTrackRequest(title, artist)
+      findTrack(key, title, artist)
         .then((song) => {
           saveSearch(key, song)
           return song
@@ -353,6 +364,14 @@ export function searchTrack(title, artist) {
     )
   }
   return searchCache.get(key)
+}
+
+async function findTrack(key, title, artist) {
+  const shared = await lookupTrack(key).catch(() => undefined)
+  if (shared !== undefined) return shared
+  const song = await searchTrackRequest(title, artist)
+  saveTrack(key, song).catch(() => {})
+  return song
 }
 
 async function searchTrackRequest(title, artist) {
