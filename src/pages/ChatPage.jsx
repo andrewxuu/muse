@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Heart, ListMusic, ListPlus, RefreshCw, Send } from 'lucide-react'
+import { Heart, ListMusic, ListPlus, RefreshCw, RotateCcw, Send } from 'lucide-react'
 import ChatDayPicker from '../components/chat/ChatDayPicker'
 import ChatMessage, { TypingDots } from '../components/chat/ChatMessage'
 import PlaylistCard from '../components/chat/PlaylistCard'
+import MixBuild, { MixReady } from '../components/playlists/MixBuild'
+import { useMixBuild } from '../components/playlists/useMixBuild'
 import IconButton from '../components/ui/IconButton'
 import SegmentedSwitch from '../components/ui/SegmentedSwitch'
 import SongRow from '../components/songs/SongRow'
 import SavedPanel from '../components/layout/SavedPanel'
 import { useSpotify } from '../spotify/useSpotify'
-import { detectMood, getPicks, pickSongs } from '../picks'
+import { getPicks, pickSongs } from '../picks'
 import { requestPicks, topArtists } from '../lib/requestPicks'
 import { songs as sampleSongs } from '../data/data'
 import { moodKey, useFeedback } from '../feedback'
@@ -16,9 +18,12 @@ import { chatDays, greetingText, loadChats, saveChat, todayKey } from '../data/s
 import { askMuse } from '../services/chatLLM'
 import { checkInFor } from '../data/sampleMoods'
 import { sampleDataOn } from '../lib/devMode'
-import { buildMoodSongs, isGoodMatch, matchPercent, profilePlaylists, rankProfiles } from '../lib/playlistMood'
-import { playlistCache } from '../lib/playlistCache'
-import { MODES, canonMood, mixName, stateFor, targetFor } from '../lib/moodTags'
+import { useAccount } from '../account'
+import { reportSyncError } from '../lib/cloudSync'
+import { pullChats } from '../lib/chatSync'
+import { loadShown, saveShown } from '../lib/shownSync'
+import { isGoodMatch, matchPercent, profilePlaylists, rankProfiles } from '../lib/playlistMood'
+import { MODES, canonMood, nearestMood, stateFor, targetFor } from '../lib/moodTags'
 import StressFace from '../components/ui/StressFace'
 import { ratingMood, stressLabel, stressValue, useRatings } from '../ratings'
 
@@ -33,9 +38,12 @@ const asksForPlaylists = (text) => /\b(recommend|suggest|show|find|pick|which|an
 const isRecent = (at) => Date.now() - new Date(at).getTime() < 3 * 60 * 1000
 
 export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, onOpenLiked }) {
-  const { status, profile, playlists, listening, liked, createPlaylist, addSongs } = useSpotify()
+  const { status, profile, playlists, listening, liked } = useSpotify()
+  const { progress: mixProgress, run: runMix } = useMixBuild()
   const { forMood, ratingOf, rate } = useFeedback()
   const { ratings, addRating, removeRating } = useRatings()
+  const { user } = useAccount()
+  const userId = user?.id ?? null
   const todayRatings = ratings.filter((r) => new Date(r.at).toDateString() === new Date().toDateString())
   const state = todayRatings.length ? stateFor({ stress: stressValue(todayRatings[0].rating), recent: todayRatings.map((r) => stressValue(r.rating)).reverse() }) : null
   const stressOf = (date) => checkInFor(date)?.mood ?? null
@@ -51,6 +59,7 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
   const [building, setBuilding] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [savedOpen, setSavedOpen] = useState(false)
+  const [, refresh] = useState(0)
   const nextId = useRef(null)
   const shown = useRef({})
   const endRef = useRef(null)
@@ -65,10 +74,48 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
   }, [messages])
 
   useEffect(() => {
+    if (!userId) return
+    let live = true
+    pullChats(userId)
+      .then((changed) => {
+        if (!live || !changed) return
+        const today = loadChats()[todayKey()]
+        if (today) {
+          setMessages((m) => (m.length > 1 ? m : today))
+          nextId.current = Math.max(nextId.current, ...today.map((msg) => msg.id + 1))
+        }
+        refresh((n) => n + 1)
+      })
+      .catch(reportSyncError)
+    return () => {
+      live = false
+    }
+  }, [userId])
+
+  useEffect(() => {
+    if (!userId) return
+    let live = true
+    loadShown(userId)
+      .then((byMood) => {
+        if (!live) return
+        Object.entries(byMood).forEach(([key, songs]) => {
+          shown.current[key] ??= new Map()
+          songs.forEach((s) => !shown.current[key].has(s.id) && shown.current[key].set(s.id, s))
+        })
+      })
+      .catch(reportSyncError)
+    return () => {
+      live = false
+    }
+  }, [userId])
+
+  useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, viewDay, thinking])
 
-  const respond = async (mood, exclude = [], before = [], request = null) => {
+  const currentMood = () => [...messages].reverse().find((m) => m.mood)?.mood || state?.mood || 'Meh'
+
+  const respond = async (mood, exclude = [], before = [], request = null, aim = null, retry = null, focus = '', ask = null) => {
     const id = nextId.current++
     if (noMusic && !isSample) {
       const text = 'Connect Spotify in settings so I can find songs for you.'
@@ -88,9 +135,11 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
       request && !isSample
         ? await requestPicks({
             request,
+            ask,
             mood,
             state: stateIf(mood),
             mode,
+            aim,
             taste: topArtists(listening.filter((s) => s.top).concat(liked)),
             avoid: [...alreadyShown, ...feedback.disliked],
             skip: new Set(skip),
@@ -107,6 +156,7 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
           mood,
           mode,
           state: stateIf(mood),
+          aim,
           exclude: skip,
           alreadyShown,
           feedback,
@@ -115,8 +165,12 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
     await minimum
     shown.current[key] ??= new Map()
     picks.songs.forEach((s) => shown.current[key].set(s.id, s))
+    if (userId) saveShown(userId, key, picks.songs).catch(reportSyncError)
 
-    setMessages((m) => m.map((msg) => (msg.id === id ? { id, from: 'bot', mood, request: asked.length ? request : null, ...picks } : msg)))
+    setMessages((m) => {
+      const done = m.map((msg) => (msg.id === id ? { id, from: 'bot', mood, aim, retry, focus, ask, request: asked.length ? request : null, ...picks } : msg))
+      return retry ? [...done, { id: nextId.current++, from: 'bot', fallback: true, retry }] : done
+    })
   }
 
   const applyStress = (level) => {
@@ -140,23 +194,16 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
     setMessages((m) => [...m, { id: nextId.current++, from: 'bot', text }])
   }
 
-  const makePlaylist = async (mood) => {
+  const makePlaylist = async (mood, focus = '', aim = null, ask = null) => {
     if (status !== 'connected') return botSay('Connect Spotify first, then I can make playlists for you.')
     if (building) return
     setBuilding(true)
     const id = nextId.current++
-    setMessages((m) => [...m, { id, from: 'bot', pending: true }])
+    setMessages((m) => [...m, { id, from: 'bot', pending: true, building: true }])
     const finish = (msg) => setMessages((m) => m.map((x) => (x.id === id ? { id, from: 'bot', ...msg } : x)))
     try {
-      const songs = await buildMoodSongs({ mood, state: stateIf(mood), mode, saved: savedSongs, listening })
-      if (!songs.length) throw new Error('I couldn’t find enough songs yet. Try again in a bit.')
-      const playlist = await createPlaylist(mixName(mood))
-      await addSongs(playlist.id, songs)
-      playlistCache.set(playlist.id, songs)
-      finish({
-        text: `Done. Your ${mixName(mood)} is ready.`,
-        playlist: { id: playlist.id, name: playlist.name, image: playlist.image ?? null, count: songs.length },
-      })
+      const { mix } = await runMix({ mood, focus, aim, ask, state: stateIf(mood), mode, saved: savedSongs, listening })
+      finish({ text: `Done. Your ${mix.name} is ready.`, mix })
     } catch (err) {
       finish({ text: err.message || 'I couldn’t make that playlist. Try again.' })
     } finally {
@@ -164,7 +211,7 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
     }
   }
 
-  const recommendPlaylists = async (mood) => {
+  const recommendPlaylists = async (mood, ask = null, aim = null) => {
     if (status !== 'connected' || !profile?.id) return botSay('Connect Spotify first, then I can look through your playlists.')
     const id = nextId.current++
     setMessages((m) => [...m, { id, from: 'bot', pending: true }])
@@ -174,9 +221,10 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
       setMessages((m) => m.map((x) => (x.id === id ? { id, from: 'bot', ...msg } : x)))
     }
     try {
-      const profiles = await profilePlaylists(playlists, profile.id)
-      const fits = rankProfiles(profiles, targetFor(mood, mode === MODES.lift, stateIf(mood)))
-        .filter((p) => isGoodMatch(p.distance))
+      const profiles = await profilePlaylists(playlists, profile.id, ask)
+      const moodTarget = aim && mode !== MODES.lift ? aim : targetFor(mood, mode === MODES.lift, stateIf(mood))
+      const fits = rankProfiles(profiles, moodTarget, ask)
+        .filter((p) => p.fits ?? isGoodMatch(p.distance))
         .slice(0, 3)
       if (!fits.length) return finish({ text: 'None of your playlists fit that well. Say “make a playlist” and I’ll build one.' })
       finish({
@@ -201,29 +249,40 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
     const userMsg = { id: nextId.current++, from: 'user', text: clean }
     setMessages((m) => [...m, userMsg])
 
-    const wantsMake = wantsPlaylist(clean)
-    if (wantsMake || asksForPlaylists(clean)) {
-      const mood = detectMood(clean) || [...messages].reverse().find((m) => m.mood)?.mood || state?.mood
-      if (!mood) return botSay('Happy to. How are you feeling? Tell me or pick a mood below, then ask again.')
-      return wantsMake ? makePlaylist(mood) : recommendPlaylists(mood)
-    }
+    converse([...messages, userMsg], clean)
+  }
 
+  const fallbackReply = (clean) => {
+    const mood = currentMood()
+    if (wantsPlaylist(clean)) return makePlaylist(mood)
+    if (asksForPlaylists(clean)) return recommendPlaylists(mood)
+    return respond(mood, [], [], null, null, clean)
+  }
+
+  const converse = async (history, clean) => {
     setThinking(true)
-    const llm = await askMuse([...messages, userMsg]).finally(() => setThinking(false))
-    if (!llm) {
-      const known = detectMood(clean) || [...messages].reverse().find((m) => m.mood)?.mood || state?.mood
-      if (!known) return botSay('How are you feeling right now, or what are you in the mood for? Tell me or pick a mood below.')
-      return respond(known, [], [], clean)
-    }
+    const llm = await askMuse(history).finally(() => setThinking(false))
+    if (!llm) return fallbackReply(clean)
 
     const replyMsg = { id: nextId.current++, from: 'bot', text: llm.reply }
     const noteMsg = applyStress(llm.stress)
     const lead = noteMsg ? [replyMsg, noteMsg] : [replyMsg]
-    if (!llm.song_queries.length) return setMessages((m) => [...m, ...lead])
-    respond(detectMood(llm.mood) || detectMood(clean), [], lead, clean)
+    const mood = nearestMood(llm.target) ?? currentMood()
+    const ask = llm.ask ?? null
+    if (llm.intent === 'songs') return respond(mood, [], lead, llm.focus || ask ? clean : null, llm.target, null, llm.focus, ask)
+    setMessages((m) => [...m, ...lead])
+    if (llm.intent === 'playlist') return makePlaylist(mood, llm.focus, llm.target, ask)
+    if (llm.intent === 'playlists') return recommendPlaylists(mood, ask, llm.target)
   }
 
-  const moreLikeThis = (msg) => respond(msg.mood, msg.songs.map((s) => s.id), [], msg.request)
+  const tryAgain = (msg) => {
+    const lastUser = [...messages].reverse().find((m) => m.from === 'user' && m.id < msg.id)
+    const history = messages.filter((m) => m.id <= (lastUser?.id ?? 0))
+    setMessages(history)
+    converse(history, msg.retry)
+  }
+
+  const moreLikeThis = (msg) => respond(msg.mood, msg.songs.map((s) => s.id), [], msg.request, msg.aim, null, msg.focus, msg.ask)
 
   const saveFromChat = (msg, song) => {
     if (!isSaved(song.id)) rate(msg.mood, song, 'up')
@@ -233,6 +292,7 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
   const downNote = (msg) => `Won’t be picked again${msg.mood ? ` for ${msg.mood.toLowerCase()}` : ''}`
 
   const intro = (msg) => {
+    if (msg.retry) return 'Picked from your mood and your Spotify listening:'
     const kind = canonMood(msg.mood) ? ` for feeling ${canonMood(msg.mood).toLowerCase()}` : ''
     if (msg.request) return `Matched to what you asked${kind}:`
     const basis = isSample ? 'your mood' : msg.mood ? 'your mood and your Spotify listening' : 'your Spotify listening'
@@ -283,6 +343,21 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
                 </p>
               )
             }
+            if (msg.building && mixProgress) {
+              return (
+                <ChatMessage key={msg.id} width={480} fill>
+                  <MixBuild progress={mixProgress} onOpen={onOpenPlaylist} bare />
+                </ChatMessage>
+              )
+            }
+            if (msg.mix) {
+              return (
+                <ChatMessage key={msg.id} width={480} fill>
+                  <p>{msg.text}</p>
+                  <MixReady mix={msg.mix} onOpen={onOpenPlaylist} bare />
+                </ChatMessage>
+              )
+            }
             if (msg.pending) {
               return (
                 <ChatMessage key={msg.id}>
@@ -308,13 +383,29 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
                 </ChatMessage>
               )
             }
+            if (msg.fallback) {
+              const canRetry = isToday && !messages.some((m) => m.from === 'user' && m.id > msg.id)
+              return (
+                canRetry && (
+                  <button
+                    key={msg.id}
+                    type="button"
+                    onClick={() => tryAgain(msg)}
+                    className="flex h-10 w-fit items-center gap-1.5 rounded-full border border-teal bg-surface px-3.5 text-sm font-semibold text-teal hover:bg-teal-soft"
+                  >
+                    <RotateCcw size={16} />
+                    Try again
+                  </button>
+                )
+              )
+            }
             if (!msg.songs) {
               return <ChatMessage key={msg.id}>{msg.text}</ChatMessage>
             }
             if (!msg.songs.length) {
               return (
                 <ChatMessage key={msg.id}>
-                  I’ve run out of songs I haven’t shown you for this mood. Refresh the page to start fresh, or try another mood.
+                  I’ve run out of songs I haven’t shown you for this mood. Try another mood, or check back in a few days.
                 </ChatMessage>
               )
             }
@@ -347,7 +438,7 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
                       {msg.mood && (
                         <button
                           type="button"
-                          onClick={() => recommendPlaylists(msg.mood)}
+                          onClick={() => recommendPlaylists(msg.mood, msg.ask, msg.aim)}
                           className="flex h-10 items-center gap-1.5 rounded-full border border-teal bg-surface px-3.5 text-sm font-semibold text-teal hover:bg-teal-soft"
                         >
                           <ListMusic size={16} />
@@ -357,7 +448,7 @@ export default function ChatPage({ savedSongs, isSaved, onSave, onOpenPlaylist, 
                       {msg.mood && (
                         <button
                           type="button"
-                          onClick={() => makePlaylist(msg.mood)}
+                          onClick={() => makePlaylist(msg.mood, msg.focus, msg.aim, msg.ask)}
                           disabled={building}
                           className="flex h-10 items-center gap-1.5 rounded-full bg-teal px-3.5 text-sm font-semibold text-white disabled:opacity-50"
                         >
