@@ -1,4 +1,5 @@
 import { dayKey, seeded } from './sampleMoods'
+import { pushChatDay } from '../lib/chatSync'
 import { sampleDataOn } from '../lib/devMode'
 
 const STORAGE_KEY = 'moodbot:chats'
@@ -33,6 +34,7 @@ export function saveChat(key, messages) {
   } catch {
     return
   }
+  pushChatDay(key, messages)
 }
 
 const pickFrom = (rand, list) => list[Math.floor(rand() * list.length)]

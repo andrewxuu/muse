@@ -1,7 +1,16 @@
 export const GUEST_KEY = 'moodbot:guest'
 export const DONE_KEY = 'moodbot:onboarded'
 export const STEP_KEY = 'moodbot:onboarding-step'
-export const SYNCED_KEYS = ['moodbot:genres', 'moodbot:saved-songs', 'moodbot:appearance']
+export const PROVIDER_KEY = 'moodbot:oauth-provider'
+export const SYNCED_KEYS = [
+  'moodbot:genres',
+  'moodbot:saved-songs',
+  'moodbot:appearance',
+  'moodbot:settings',
+  'moodbot:ratings',
+  'moodbot:chats',
+  'moodbot:feedback',
+]
 
 export const readKey = (key) => {
   try {

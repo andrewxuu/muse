@@ -1,4 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useAccount } from './account'
+import { reportSyncError } from './lib/cloudSync'
+import { markSynced, mergeFeedback, pullFeedback, pushFeedback } from './lib/feedbackSync'
 
 const STORAGE_KEY = 'moodbot:feedback'
 const MAX_LIKED = 30
@@ -23,7 +26,33 @@ const load = () => {
 const slim = (song) => ({ id: song.id, uri: song.uri, title: song.title, artist: song.artist, image: song.image })
 
 export function FeedbackProvider({ children }) {
+  const { user } = useAccount()
+  const userId = user?.id ?? null
   const [feedback, setFeedback] = useState(load)
+  const [pulledFor, setPulledFor] = useState(null)
+  const synced = useRef(new Map())
+
+  useEffect(() => {
+    synced.current = new Map()
+    if (!userId) return
+    let live = true
+    pullFeedback(userId)
+      .then((remote) => {
+        if (!live) return
+        markSynced(synced.current, remote)
+        setFeedback((prev) => mergeFeedback(prev, remote, { liked: MAX_LIKED, disliked: MAX_DISLIKED }))
+        setPulledFor(userId)
+      })
+      .catch(reportSyncError)
+    return () => {
+      live = false
+    }
+  }, [userId])
+
+  useEffect(() => {
+    if (!userId || pulledFor !== userId) return
+    pushFeedback(userId, feedback, synced.current).catch(reportSyncError)
+  }, [feedback, userId, pulledFor])
 
   useEffect(() => {
     try {
