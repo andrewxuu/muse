@@ -14,7 +14,20 @@ export const normalize = (text = '') =>
     .trim()
 
 export const firstArtist = (artist = '') => artist.split(', ')[0]
-export const songKey = (artist, title) => `${normalize(firstArtist(artist))}|${normalize(title)}`
+const REMIX = /\b(remix|rework|bootleg|flip|vip)\b/i
+
+const remixOf = (title = '') => {
+  const parts = [...title.matchAll(/[([]([^)\]]*)[)\]]/g)].map((m) => m[1])
+  const dash = title.match(/\s+-\s+(.*)$/)
+  if (dash) parts.push(dash[1])
+  const hit = parts.find((p) => REMIX.test(p))
+  return hit ? normalize(hit) : ''
+}
+
+export const songKey = (artist, title) => {
+  const remix = remixOf(title)
+  return `${normalize(firstArtist(artist))}|${normalize(title)}${remix ? `|${remix}` : ''}`
+}
 
 export function shuffle(list) {
   const out = [...list]
@@ -26,6 +39,18 @@ export function shuffle(list) {
 }
 
 export const uniqueBy = (list, key) => [...new Map(list.map((x) => [key(x), x])).values()]
+
+export function uniqueSongs(songs) {
+  const ids = new Set()
+  const keys = new Set()
+  return songs.filter((s) => {
+    const key = songKey(s.artist, s.title)
+    if (ids.has(s.id) || keys.has(key)) return false
+    ids.add(s.id)
+    keys.add(key)
+    return true
+  })
+}
 
 export const joinWords = (words) =>
   words.length < 2 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`

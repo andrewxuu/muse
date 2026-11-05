@@ -237,7 +237,7 @@ function explain({ chosen, songs, mood, hasMood, lifting, feedback, genreNote })
   return `${count} new ${count === 1 ? 'find' : 'finds'} ${source}${how}.${tagLine}${knownLine}${genreNote}${note}`
 }
 
-export async function getPicks({ top, library, pool, mood, mode, state, exclude = [], alreadyShown = [], feedback = { liked: [], disliked: [] } }) {
+export async function getPicks({ top, library, pool, mood, mode, state, aim = null, exclude = [], alreadyShown = [], feedback = { liked: [], disliked: [] } }) {
   const prefs = loadGenrePrefs()
   if (hasGenrePrefs(prefs)) {
     top = await fillGenres(top)
@@ -261,7 +261,7 @@ export async function getPicks({ top, library, pool, mood, mode, state, exclude 
   }
 
   const lifting = mode === MODES.lift && Boolean(mood)
-  const baseTarget = targetFor(mood, lifting, state)
+  const baseTarget = aim && !lifting ? aim : targetFor(mood, lifting, state)
   const hasMood = Object.keys(baseTarget).length > 0
   const tagMood = effectiveMood(mood, lifting)
   const useTags = Boolean(tagMood) && isLastfmConfigured()
