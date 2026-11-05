@@ -160,12 +160,20 @@ export async function getProfile() {
   const me = await request('/me')
   const images = me.images ?? []
   const image = images.find((i) => (i.width ?? 0) >= 72) ?? images[0]
-  return { id: me.id, name: me.display_name || me.id, image: image?.url }
+  return { id: me.id, name: me.display_name || me.id, image: image?.url, product: me.product }
 }
 
 export async function getLikedSongs(max = 200, offset = 0) {
   const items = await collect(`/me/tracks?limit=50&offset=${offset}`, max)
   return items.filter((i) => i.track?.id).map((i) => toSong(i.track, 'spotify'))
+}
+
+export async function getLikedPage(offset = 0) {
+  const page = await request(`/me/tracks?limit=50&offset=${offset}`)
+  return {
+    total: page.total ?? 0,
+    songs: page.items.filter((i) => i.track?.id).map((i) => ({ ...toSong(i.track, 'spotify'), addedAt: i.added_at })),
+  }
 }
 
 const toPlaylist = (p) => ({
@@ -294,16 +302,6 @@ export async function getListening() {
 }
 
 
-export async function getArtistGenres(ids) {
-  const out = {}
-  const unique = [...new Set(ids)]
-  for (let i = 0; i < unique.length; i += 50) {
-    const data = await request(`/artists?ids=${unique.slice(i, i + 50).join(',')}`)
-    ;(data.artists ?? []).forEach((a) => a && (out[a.id] = a.genres ?? []))
-  }
-  return out
-}
-
 const SEARCH_KEY = 'moodbot:spotify-search'
 const SEARCH_MS = 7 * 24 * 60 * 60 * 1000
 const SEARCH_MAX = 400
@@ -366,4 +364,17 @@ async function searchTrackRequest(title, artist) {
     (t) => t?.id && t.artists.some((a) => normalize(a.name) === wantArtist) && normalize(t.name).startsWith(wantTitle)
   )
   return match ? toSong(match, 'spotify') : null
+}
+
+export async function searchArtistTracks(artist, pages = 2) {
+  const want = normalize(artist)
+  const out = new Map()
+  for (let page = 0; page < pages; page++) {
+    const params = new URLSearchParams({ q: `artist:"${artist}"`, type: 'track', limit: '10', offset: String(page * 10) })
+    const data = await request(`/search?${params}`)
+    const items = data?.tracks?.items ?? []
+    items.filter((t) => t?.id && t.artists.some((a) => normalize(a.name) === want)).forEach((t) => out.set(t.id, toSong(t, 'spotify')))
+    if (items.length < 10) break
+  }
+  return [...out.values()]
 }
