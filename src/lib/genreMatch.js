@@ -1,5 +1,4 @@
 import { getArtistTags, isLastfmConfigured } from '../services/lastfm'
-import { getArtistGenres } from '../spotify/api'
 import { firstArtist, normalize, wordPattern } from './filters'
 
 const GENRE_WORDS = {
@@ -72,18 +71,11 @@ export const artistKey = (song) => normalize(firstArtist(song.artist))
 
 export async function lookupGenres(wanted) {
   const found = {}
-  const withIds = wanted.filter((w) => w.id)
-  if (withIds.length) {
-    const byId = await getArtistGenres(withIds.map((w) => w.id)).catch(() => ({}))
-    withIds.forEach((w) => byId[w.id]?.length && (found[w.key] = byId[w.id]))
-  }
-  if (isLastfmConfigured()) {
-    const rest = wanted.filter((w) => !found[w.key])
-    const tags = await Promise.allSettled(rest.map((w) => getArtistTags(w.name)))
-    tags.forEach((r, i) => {
-      if (r.status === 'fulfilled') found[rest[i].key] = r.value.filter((t) => t.count >= 20).slice(0, 8).map((t) => t.name)
-    })
-  }
+  if (!isLastfmConfigured()) return found
+  const tags = await Promise.allSettled(wanted.map((w) => getArtistTags(w.name)))
+  tags.forEach((r, i) => {
+    if (r.status === 'fulfilled') found[wanted[i].key] = r.value.filter((t) => t.count >= 20).slice(0, 8).map((t) => t.name)
+  })
   return found
 }
 
