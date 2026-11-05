@@ -4,7 +4,7 @@ const MAX_TURNS = 12
 
 const toApiMessages = (messages) => {
   const turns = messages
-    .filter((m) => m.text && !m.pending)
+    .filter((m) => m.text && !m.pending && !m.fallback)
     .map((m) => ({ role: m.from === 'user' ? 'user' : 'assistant', content: m.text }))
     .slice(-MAX_TURNS)
 

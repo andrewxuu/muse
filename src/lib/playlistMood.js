@@ -1,9 +1,10 @@
 import { getAudioFeatures } from '../services/reccobeats'
-import { getPlaylistSongs } from '../spotify/api'
+import { getPlaylistSongs, searchArtistTracks } from '../spotify/api'
 import { playlistCache } from './playlistCache'
-import { FILTERS, firstArtist, shuffle } from './filters'
+import { FILTERS, firstArtist, normalize, shuffle, uniqueSongs } from './filters'
 import { MODES, averageOf, distance, effectiveMood, stateFor, stateOf, targetFor, targetOf } from './moodTags'
-import { llmSongs } from '../services/llmSongs'
+import { focusSongs, llmSongs } from '../services/llmSongs'
+import { MAX_BPM_PAD, MOOD_WEIGHT, genreHit, inBpm, rankForAsk, tempoGap, topArtists } from './requestPicks'
 import { discoverSongs } from '../picks'
 import { applyGenrePrefs, boostLiked, fillGenres, hasGenrePrefs, inGenres, matchGenre, topGenres } from './genreMatch'
 import { loadGenrePrefs } from './genrePrefs'
@@ -64,7 +65,20 @@ async function genreShares(songs, prefs) {
   return { avoid: share(prefs.avoided), like: share(prefs.liked) }
 }
 
-export async function profilePlaylists(playlists, ownerId) {
+const median = (list) => {
+  const sorted = list.filter((n) => typeof n === 'number' && n > 0).sort((a, b) => a - b)
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : null
+}
+
+async function askShare(songs, ask) {
+  if (!ask || !songs.length || !(ask.artists?.length || ask.genres?.length)) return null
+  const wanted = (ask.artists ?? []).map(normalize)
+  const filled = ask.genres?.length ? await fillGenres(songs).catch(() => songs) : songs
+  const hit = (s) => wanted.some((w) => byArtist(s, w)) || (ask.genres?.length && genreHit(s.genres, ask.genres))
+  return filled.filter(hit).length / filled.length
+}
+
+export async function profilePlaylists(playlists, ownerId, ask = null) {
   const prefs = loadGenrePrefs()
   const owned = playlists.filter((p) => p.ownerId === ownerId && p.count !== 0).slice(0, MAX_PLAYLISTS)
   const saved = readProfiles()
@@ -72,14 +86,14 @@ export async function profilePlaylists(playlists, ownerId) {
   const results = await Promise.allSettled(
     owned.map(async (playlist) => {
       const hit = saved[playlist.id]
-      if (hit && hit.count === playlist.count && Date.now() - hit.at < PROFILE_MS) {
+      if (hit && hit.count === playlist.count && Date.now() - hit.at < PROFILE_MS && (!hit.value || 'tempo' in hit.value)) {
         next[playlist.id] = hit
         return hit.value && { playlist, ...hit.value }
       }
       const songs = (await sampleOf(playlist.id)).slice(0, MAX_SONGS)
       const features = await getAudioFeatures(songs.map((s) => s.id))
       const found = songs.map((s) => features[s.id]).filter(Boolean)
-      const value = found.length >= MIN_SONGS ? { profile: averageOf(found), songs: songs.slice(0, GENRE_SONGS) } : null
+      const value = found.length >= MIN_SONGS ? { profile: averageOf(found), tempo: median(found.map((f) => f.tempo)), songs: songs.slice(0, GENRE_SONGS) } : null
       if (Object.keys(features).length) next[playlist.id] = { count: playlist.count, at: Date.now(), value }
       return value && { playlist, ...value }
     })
@@ -88,16 +102,33 @@ export async function profilePlaylists(playlists, ownerId) {
   writeProfiles(next)
   const profiled = results.flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []))
   const out = []
-  for (const { songs, ...rest } of profiled) out.push({ ...rest, ...(await genreShares(songs, prefs)) })
+  for (const { songs, ...rest } of profiled) out.push({ ...rest, ...(await genreShares(songs, prefs)), share: await askShare(songs, ask) })
   return out
 }
 
-export const rankProfiles = (profiles, mood) => {
+const MIN_SHARE = 0.25
+
+function askDistance(p, mood, ask) {
+  const m = distance(p.profile, targetFrom(mood))
+  const parts = [[Number.isFinite(m) ? m : FAR, MOOD_WEIGHT]]
+  if (ask.sound) parts.push([distance(p.profile, ask.sound), 1])
+  if (ask.bpm) parts.push([Math.min(FAR, tempoGap(p.tempo, ask.bpm) / 80), 1])
+  if (p.share != null) parts.push([(1 - p.share) * FAR, 1])
+  const valid = parts.filter(([d]) => Number.isFinite(d))
+  return valid.reduce((sum, [d, w]) => sum + d * w, 0) / valid.reduce((sum, [, w]) => sum + w, 0)
+}
+
+const passesAsk = (p, ask) => {
+  if (!ask || !(ask.bpm || p.share != null)) return undefined
+  return (!ask.bpm || inBpm(p.tempo, ask.bpm, MAX_BPM_PAD)) && (p.share == null || p.share >= MIN_SHARE)
+}
+
+export const rankProfiles = (profiles, mood, ask = null) => {
   const bonus = (p) => LIKE_BONUS * (p.like ?? 0)
   return profiles
     .filter((p) => (p.avoid ?? 0) <= AVOID_SHARE)
-    .map((p) => ({ ...p, distance: distance(p.profile, targetFrom(mood)) }))
-    .filter((p) => Number.isFinite(p.distance))
+    .map((p) => ({ ...p, distance: ask ? askDistance(p, mood, ask) : distance(p.profile, targetFrom(mood)), fits: passesAsk(p, ask) }))
+    .filter((p) => Number.isFinite(p.distance) && p.fits !== false)
     .sort((a, b) => a.distance - bonus(a) - (b.distance - bonus(b)))
 }
 
@@ -124,7 +155,7 @@ export function describeProfile(p) {
   return traits.slice(0, 3).join(', ') || 'Balanced mix'
 }
 
-const unique = (songs) => [...new Map(songs.map((s) => [s.id, s])).values()]
+const unique = uniqueSongs
 
 const energyCurve = (i, n, base, lifting) => {
   const t = n > 1 ? i / (n - 1) : 0
@@ -226,7 +257,7 @@ function writeRecent(songs) {
   }
 }
 
-export async function buildMoodSongs({ mood, state, mode = MODES.match, saved, listening }) {
+export async function buildMoodSongs({ mood, state, mode = MODES.match, saved, listening, onStep = () => {}, onFound = () => {} }) {
   const lifting = mode === MODES.lift
   const target = targetFor(mood, lifting, state)
   const library = saved.filter((s) => s.id)
@@ -235,6 +266,7 @@ export async function buildMoodSongs({ mood, state, mode = MODES.match, saved, l
   const recent = readRecent()
   let songs = []
 
+  onStep('find', 'Looking for songs that fit')
   try {
     songs = unique(
       await discoverSongs({ top: listening.filter((s) => s.top), library, pool: listening, mood, state, lifting, stayIn, count: NEW_MAX, exclude: recent })
@@ -242,6 +274,7 @@ export async function buildMoodSongs({ mood, state, mode = MODES.match, saved, l
   } catch {
     songs = []
   }
+  onFound(songs)
 
   const fill = async (candidates, genres) => {
     try {
@@ -253,12 +286,20 @@ export async function buildMoodSongs({ mood, state, mode = MODES.match, saved, l
     } catch {
       songs = unique(songs)
     }
+    onFound(songs)
   }
 
-  if (songs.length < NEW_MIN) await fill(library.slice(0, 200), stayIn)
-  if (songs.length < NEW_MIN) await fill(listening.filter((s) => s.id), stayIn)
+  if (songs.length < NEW_MIN) {
+    onStep('find', 'Checking your liked songs')
+    await fill(library.slice(0, 200), stayIn)
+  }
+  if (songs.length < NEW_MIN) {
+    onStep('find', 'Looking at what you play most')
+    await fill(listening.filter((s) => s.id), stayIn)
+  }
 
   if (songs.length < NEW_MIN) {
+    onStep('find', 'Finding a few new ones')
     try {
       const asked = await llmSongs(stateOf(effectiveMood(mood, lifting)).ask, NEW_MAX - songs.length, songs)
       const allowed = (await applyGenrePrefs(asked, prefs)).songs
@@ -267,6 +308,7 @@ export async function buildMoodSongs({ mood, state, mode = MODES.match, saved, l
     } catch {
       songs = unique(songs)
     }
+    onFound(songs)
   }
 
   if (songs.length < MIN_COHESIVE) {
@@ -274,7 +316,74 @@ export async function buildMoodSongs({ mood, state, mode = MODES.match, saved, l
     if (songs.length < MIN_COHESIVE) await fill(listening.filter((s) => s.id), [])
   }
 
+  onStep('order')
   const result = await djOrder(songs.slice(0, NEW_MAX), target, lifting)
+  writeRecent(result)
+  return result
+}
+
+const FOCUS_SHARE = 0.55
+const FAMILIAR_SHARE = 0.5
+const TASTE_GENRES = 5
+
+async function tasteOf(listening, library, prefs) {
+  const top = listening.filter((s) => s.top)
+  const sample = await fillGenres([...top.slice(0, 40), ...listening.slice(0, 40), ...library.slice(0, 80)]).catch(() => [])
+  const ranked = topGenres(sample, TASTE_GENRES + prefs.avoided.length).filter((g) => !prefs.avoided.includes(g))
+  const liked = prefs.liked.filter((g) => !ranked.includes(g))
+  return { artists: topArtists([...top, ...library]), genres: [...ranked, ...liked].slice(0, TASTE_GENRES) }
+}
+
+const byArtist = (song, want) => (song.artist ?? '').split(', ').some((a) => normalize(a) === want)
+
+export async function buildFocusSongs({ focus, ask = null, mood, state, mode = MODES.match, aim = null, saved, listening, onStep = () => {}, onFound = () => {} }) {
+  const lifting = mode === MODES.lift
+  const base = aim && !lifting ? aim : targetFor(mood, lifting, state)
+  const target = { ...base, ...(ask?.sound ?? {}) }
+  const recent = new Set(readRecent())
+  const strict = Boolean(ask && (ask.bpm || ask.sound || ask.genres?.length))
+  const rank = (list, need) => (strict ? rankForAsk(list, ask, base, need) : list)
+
+  const prefs = loadGenrePrefs()
+  const library = saved.filter((s) => s.id)
+  const activity = !ask?.artists?.length && !ask?.genres?.length
+
+  onStep('find', `Looking for ${focus} songs`)
+  const taste = activity ? await tasteOf(listening, library, prefs) : null
+  const asked = await focusSongs({ focus, ask, taste, mood, count: NEW_MAX + 10 }).catch(() => ({ artist: '', songs: [] }))
+  const want = normalize(asked.artist || ask?.artists?.[0] || '')
+  const name = asked.artist || ask?.artists?.[0]
+  const cap = Math.round(NEW_MAX * FOCUS_SHARE)
+  let songs
+
+  if (want) {
+    const own = [...saved, ...listening].filter((s) => s.id && byArtist(s, want))
+    if (!strict) onFound(unique(own).slice(0, NEW_MAX))
+    onStep('find', `Pulling ${name} tracks`)
+    const found = await searchArtistTracks(name).catch(() => [])
+    const theirs = await rank(
+      unique([...shuffle(own), ...asked.songs.filter((s) => byArtist(s, want)), ...shuffle(found)]).filter((s) => !recent.has(s.id)),
+      cap
+    )
+    const similar = await rank(asked.songs.filter((s) => !byArtist(s, want)), NEW_MAX - cap)
+    songs = unique([...theirs.slice(0, cap), ...similar]).slice(0, NEW_MAX)
+    if (songs.length < NEW_MIN) songs = unique([...songs, ...theirs.slice(cap)]).slice(0, NEW_MAX)
+  } else if (activity) {
+    onStep('find', 'Checking your liked songs')
+    const pool = unique([...library.slice(0, 200), ...listening.filter((s) => s.id)]).filter((s) => !recent.has(s.id))
+    const allowed = (await applyGenrePrefs(pool, prefs).catch(() => ({ songs: pool }))).songs
+    const familiar = strict ? await rank(allowed, NEW_MAX) : await closestSongs(allowed, target, NEW_MAX).catch(() => [])
+    const fresh = await rank((await applyGenrePrefs(asked.songs, prefs).catch(() => ({ songs: asked.songs }))).songs, NEW_MAX)
+    const half = Math.round(NEW_MAX * FAMILIAR_SHARE)
+    songs = unique([...familiar.slice(0, half), ...fresh]).slice(0, NEW_MAX)
+    if (songs.length < NEW_MIN) songs = unique([...songs, ...familiar.slice(half)]).slice(0, NEW_MAX)
+  } else {
+    songs = (await rank(unique(asked.songs), NEW_MIN)).slice(0, NEW_MAX)
+  }
+  onFound(songs)
+
+  onStep('order')
+  const result = await djOrder(songs, target, lifting)
   writeRecent(result)
   return result
 }
@@ -283,13 +392,15 @@ const SWAP_SHARE = 0.25
 const SWAP_MAX = 15
 const SWAP_LIKED = 150
 
-export async function planSwap({ songs, mood, state, lifting, library, listening }) {
+export async function planSwap({ songs, mood, state, lifting, library, listening, onLeaving = () => {}, onProgress = () => {} }) {
   const target = targetFor(mood, lifting, state)
   const features = await getAudioFeatures(songs.slice(0, 200).map((s) => s.id))
   const scored = songs.map((song) => ({ song, d: distance(features[song.id], target) })).filter((x) => Number.isFinite(x.d))
   const count = Math.min(SWAP_MAX, Math.max(1, Math.round(songs.length * SWAP_SHARE)))
   const leaving = [...scored].sort((a, b) => b.d - a.d).slice(0, count)
   if (!leaving.length) return null
+  onLeaving(leaving.map((x) => x.song.id))
+  onProgress(0.35)
 
   const ids = songs.map((s) => s.id)
   const have = new Set(ids)
@@ -298,6 +409,7 @@ export async function planSwap({ songs, mood, state, lifting, library, listening
 
   const fresh = await discoverSongs({ top: listening.filter((s) => s.top), library, pool: listening, mood, state, lifting, stayIn, count: count + 5, exclude: ids }).catch(() => [])
   const freshIds = new Set(fresh.map((s) => s.id))
+  onProgress(0.7)
 
   let pool = unique([...fresh, ...library.filter((s) => s.id && !have.has(s.id)).slice(0, SWAP_LIKED)]).filter((s) => !have.has(s.id))
   try {
@@ -307,6 +419,7 @@ export async function planSwap({ songs, mood, state, lifting, library, listening
   }
 
   const poolFeatures = await getAudioFeatures(pool.map((s) => s.id)).catch(() => ({}))
+  onProgress(0.9)
   const coming = pool
     .map((song) => ({ song, d: distance(poolFeatures[song.id], target) }))
     .filter((x) => Number.isFinite(x.d))
