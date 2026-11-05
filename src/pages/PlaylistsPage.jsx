@@ -5,9 +5,10 @@ import PlaylistDetail from './PlaylistDetail'
 import NewPlaylistForm from '../components/playlists/NewPlaylistForm'
 import ConfirmDelete from '../components/playlists/ConfirmDelete'
 import UndoBar from '../components/ui/UndoBar'
+import { SkeletonTile, Spinner } from '../components/ui/Skeleton'
 
 export default function PlaylistsPage({ savedSongs, isSaved, onSave, initialOpenId = null }) {
-  const { status, error, profile, playlists, sync, connect, createPlaylist, removePlaylists, restorePlaylists } = useSpotify()
+  const { status, error, likedLoad, profile, playlists, sync, connect, createPlaylist, removePlaylists, restorePlaylists } = useSpotify()
   const [openId, setOpenId] = useState(initialOpenId)
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -44,7 +45,7 @@ export default function PlaylistsPage({ savedSongs, isSaved, onSave, initialOpen
   const needsSpotify = status === 'disconnected' || status === 'expired'
 
   const emptyNote = () => {
-    if (syncing) return <p className="text-[15px] text-muted">Loading your playlists…</p>
+    if (syncing) return <p role="status" className="sr-only">Loading your playlists</p>
     if (needsSpotify) return <p className="text-[15px] text-muted">Connect Spotify to see your playlists here.</p>
     return <p className="text-[15px] text-muted">Your Spotify account doesn’t have any other playlists yet.</p>
   }
@@ -62,7 +63,14 @@ export default function PlaylistsPage({ savedSongs, isSaved, onSave, initialOpen
             <Heart size={56} fill="currentColor" />
           </div>
           <p className="mt-2 truncate text-base font-semibold">Liked songs</p>
-          <p className="mt-2 text-[13px] text-muted">{savedSongs.length} songs</p>
+          {likedLoad ? (
+            <p role="status" className="mt-2 flex items-center gap-1.5 text-[13px] text-muted">
+              <Spinner size={13} />
+              {likedLoad.total ? `Loading ${likedLoad.have} of ${likedLoad.total}` : 'Loading…'}
+            </p>
+          ) : (
+            <p className="mt-2 text-[13px] text-muted">{savedSongs.length} songs</p>
+          )}
         </button>
         {playlists.map((p) => {
           const mine = isMine(p)
@@ -97,6 +105,9 @@ export default function PlaylistsPage({ savedSongs, isSaved, onSave, initialOpen
             </button>
           )
         })}
+        {syncing &&
+          !playlists.length &&
+          Array.from({ length: 5 }, (_, i) => <SkeletonTile key={i} className="aspect-square rounded-[14px] sm:aspect-auto sm:h-[220px]" />)}
       </div>
       {!playlists.length && emptyNote()}
     </div>

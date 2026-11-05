@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Play } from 'lucide-react'
+import { ChevronRight, Play, Sparkles } from 'lucide-react'
 import SpotifyError from './SpotifyError'
 import { useSpotify } from '../../spotify/useSpotify'
 import { usePlayer } from '../../spotify/usePlayer'
 import { getPlaylistSongs } from '../../spotify/api'
 import { playlistCache } from '../../lib/playlistCache'
 import IconButton from '../ui/IconButton'
-import { mixName } from '../../lib/moodTags'
-import { buildMoodSongs, isGoodMatch, matchPercent, profilePlaylists, rankProfiles } from '../../lib/playlistMood'
+import Skeleton, { SkeletonLines } from '../ui/Skeleton'
+import MixBuild from './MixBuild'
+import Collapse from '../ui/Collapse'
+import { useMixBuild } from './useMixBuild'
+import { isGoodMatch, matchPercent, profilePlaylists, rankProfiles } from '../../lib/playlistMood'
 
 export default function PlaylistPick({ state, savedSongs, onOpen }) {
   const mood = state?.mood ?? null
-  const { status, profile, playlists, listening, createPlaylist, addSongs } = useSpotify()
+  const { status, profile, playlists, listening } = useSpotify()
   const [profiles, setProfiles] = useState(null)
-  const [building, setBuilding] = useState(false)
   const [error, setError] = useState(null)
+  const { progress, run } = useMixBuild()
 
   useEffect(() => {
     if (status !== 'connected' || !profile?.id) return
@@ -30,55 +33,87 @@ export default function PlaylistPick({ state, savedSongs, onOpen }) {
   const best = useMemo(() => (profiles && mood ? rankProfiles(profiles, state.target)[0] : null), [profiles, mood, state])
 
   const build = async () => {
-    setBuilding(true)
     setError(null)
     try {
-      const picks = await buildMoodSongs({ mood, state, saved: savedSongs, listening })
-      if (!picks.length) throw new Error('Couldn’t find enough songs yet. Try again.')
-      const playlist = await createPlaylist(mixName(mood))
-      await addSongs(playlist.id, picks)
-      playlistCache.set(playlist.id, picks)
-      onOpen(playlist.id)
+      await run({ mood, state, saved: savedSongs, listening })
     } catch (err) {
       setError(err)
-    } finally {
-      setBuilding(false)
     }
   }
 
   if (!mood) return <p className="text-sm text-muted">Rate your stress above to get a playlist pick.</p>
   if (status !== 'connected') return <p className="text-sm text-muted">Connect Spotify to get playlist picks.</p>
-  if (!profiles) return <p role="status" className="text-sm text-muted">Finding your best match…</p>
+  if (!profiles) {
+    return (
+      <div className="flex w-full items-center gap-4">
+        <p role="status" className="sr-only">
+          Finding your best match
+        </p>
+        <Skeleton className="size-16 shrink-0 rounded-[12px]" />
+        <SkeletonLines title="w-1/2" sub="w-1/4" />
+        <Skeleton className="size-11 shrink-0 rounded-full" />
+      </div>
+    )
+  }
 
   const matched = best && isGoodMatch(best.distance)
 
+  const done = Boolean(progress?.mix)
+  const buildRow = (
+    <button
+      type="button"
+      onClick={build}
+      className="flex w-full items-center gap-2 border-t border-line pt-3 text-left text-[15px] font-semibold text-teal"
+    >
+      <Sparkles size={17} aria-hidden="true" />
+      <span className="flex-1">Build a new mix</span>
+      <ChevronRight size={18} aria-hidden="true" />
+    </button>
+  )
+
   return (
-    <div className="flex flex-col items-start gap-3">
-      {matched ? (
-        <MatchCard best={best} onOpen={onOpen} />
+    <div className="flex w-full flex-col items-start">
+      {progress ? (
+        <>
+          {matched && (
+            <Collapse open={!done}>
+              <div className="pb-3 opacity-50">
+                <MatchCard best={best} onOpen={onOpen} compact />
+              </div>
+            </Collapse>
+          )}
+          <div
+            className={`w-full border-t transition-[border-color,padding] duration-[450ms] motion-reduce:transition-none ${
+              matched && !done ? 'border-line pt-3' : 'border-transparent pt-0'
+            }`}
+          >
+            <MixBuild progress={progress} onOpen={onOpen} bare wide />
+          </div>
+          {matched && (
+            <Collapse open={done} className={done ? 'delay-[180ms]' : ''}>
+              <div className="pt-4">
+                <AlsoFits best={best} onOpen={onOpen} />
+              </div>
+            </Collapse>
+          )}
+          <Collapse open={done}>
+            <div className="pt-3">{buildRow}</div>
+          </Collapse>
+        </>
       ) : (
-        <p className="text-sm text-muted">None of your playlists fit how you feel right now.</p>
+        <div className="flex w-full flex-col items-start gap-3">
+          {matched ? <MatchCard best={best} onOpen={onOpen} /> : <p className="text-sm text-muted">None of your playlists fit how you feel right now.</p>}
+          {buildRow}
+        </div>
       )}
-      <button
-        type="button"
-        onClick={build}
-        disabled={building}
-        className={
-          matched
-            ? 'text-sm font-semibold text-teal underline disabled:opacity-50'
-            : 'h-10 rounded-full bg-teal px-5 text-[15px] text-white disabled:opacity-50'
-        }
-      >
-        {building ? 'Building…' : matched ? 'Or build a new mix' : 'Build a new mix'}
-      </button>
       <SpotifyError error={error} />
     </div>
   )
 }
 
-function MatchCard({ best, onOpen }) {
+function MatchCard({ best, onOpen, compact }) {
   const { playlist } = best
-  const { play, notify } = usePlayer()
+  const { play, notify, canPlay } = usePlayer()
   const [loading, setLoading] = useState(false)
 
   const start = async () => {
@@ -101,9 +136,9 @@ function MatchCard({ best, onOpen }) {
     <div className="flex items-center gap-4">
       <button type="button" onClick={() => onOpen(playlist.id)} className="flex min-w-0 items-center gap-4 text-left">
         {playlist.image ? (
-          <img src={playlist.image} alt="" className="size-16 shrink-0 rounded-[12px] object-cover" />
+          <img src={playlist.image} alt="" className={`${compact ? 'size-11 rounded-[10px]' : 'size-16 rounded-[12px]'} shrink-0 object-cover transition-all duration-300`} />
         ) : (
-          <div className="size-16 shrink-0 rounded-[12px] bg-art" />
+          <div className={`${compact ? 'size-11 rounded-[10px]' : 'size-16 rounded-[12px]'} shrink-0 bg-art transition-all duration-300`} />
         )}
         <div className="min-w-0">
           <p className="truncate text-[15px] font-semibold">
@@ -111,7 +146,26 @@ function MatchCard({ best, onOpen }) {
           </p>
         </div>
       </button>
-      <IconButton icon={Play} label={loading ? 'Loading playlist' : `Play ${playlist.name}`} primary onClick={loading ? undefined : start} />
+      {canPlay && (
+        <IconButton icon={Play} label={loading ? 'Loading playlist' : `Play ${playlist.name}`} primary size={compact ? 36 : 44} onClick={loading ? undefined : start} />
+      )}
     </div>
+  )
+}
+
+function AlsoFits({ best, onOpen }) {
+  const { playlist } = best
+  return (
+    <button type="button" onClick={() => onOpen(playlist.id)} className="flex w-full min-w-0 items-center gap-2 text-left text-[13px] text-muted">
+      {playlist.image ? (
+        <img src={playlist.image} alt="" className="size-6 shrink-0 rounded-md object-cover" />
+      ) : (
+        <span className="size-6 shrink-0 rounded-md bg-art" />
+      )}
+      <span className="min-w-0 truncate">
+        Also fits: <span className="font-semibold text-ink">{playlist.name}</span> · {matchPercent(best.distance)}%
+      </span>
+      <span className="ml-auto shrink-0 font-semibold text-teal">Open</span>
+    </button>
   )
 }

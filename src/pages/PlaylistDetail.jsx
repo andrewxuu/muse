@@ -16,6 +16,7 @@ import { getAudioFeatures } from '../services/reccobeats'
 import { stressValue, useRatings } from '../ratings'
 import ConfirmRemove from '../components/playlists/ConfirmRemove'
 import SwapPreview from '../components/playlists/SwapPreview'
+import Skeleton, { SkeletonPlaylistRow, Spinner } from '../components/ui/Skeleton'
 
 const cache = playlistCache
 const ORIGINAL = 'Original'
@@ -50,9 +51,9 @@ const totalLength = (songs) => {
 }
 
 export default function PlaylistDetail({ playlist, songs: fixedSongs, onBack, isSaved, onSave }) {
-  const { profile, listening, liked, removeSong, addSongs } = useSpotify()
+  const { profile, listening, liked, likedLoad, removeSong, addSongs } = useSpotify()
   const { ratings } = useRatings()
-  const { play } = usePlayer()
+  const { play, canPlay } = usePlayer()
   const notMine = profile?.id && playlist.ownerId && playlist.ownerId !== profile.id && !playlist.collaborative
   const fixed = Boolean(fixedSongs)
   const [fetched, setState] = useState(() =>
@@ -199,9 +200,19 @@ export default function PlaylistDetail({ playlist, songs: fixedSongs, onBack, is
 
   const startSwap = async () => {
     if (swap?.status === 'planning') return
-    setSwap({ status: 'planning' })
+    setSwap({ status: 'planning', checking: null, progress: 0.1 })
+    const update = (patch) => setSwap((s) => (s?.status === 'planning' ? { ...s, ...patch } : s))
     try {
-      const plan = await planSwap({ songs: state.songs, mood, state: moodState, lifting, library: liked, listening })
+      const plan = await planSwap({
+        songs: state.songs,
+        mood,
+        state: moodState,
+        lifting,
+        library: liked,
+        listening,
+        onLeaving: (ids) => update({ checking: new Set(ids) }),
+        onProgress: (progress) => update({ progress }),
+      })
       setSwap(plan ? { status: 'ready', plan } : { status: 'none' })
     } catch {
       setSwap({ status: 'none' })
@@ -257,7 +268,18 @@ export default function PlaylistDetail({ playlist, songs: fixedSongs, onBack, is
   const summary = state.status === 'ready' ? `${listSongs.length} songs, ${totalLength(listSongs)}` : playlist.count !== null ? `${playlist.count} songs` : ''
 
   const body = () => {
-    if (state.status === 'loading') return <p role="status" className="text-[15px] text-muted">Loading songs…</p>
+    if (state.status === 'loading') {
+      return (
+        <div className="flex flex-col gap-2.5">
+          <p role="status" className="sr-only">
+            Loading songs
+          </p>
+          {Array.from({ length: Math.min(playlist.count || 8, 8) }, (_, i) => (
+            <SkeletonPlaylistRow key={i} index={i} columns={PLAYLIST_COLUMNS} />
+          ))}
+        </div>
+      )
+    }
     if (state.status === 'not-owned') {
       return <p className="text-[15px] text-muted">Spotify only shares the songs in playlists you own. Open it in Spotify to see what’s inside.</p>
     }
@@ -286,8 +308,19 @@ export default function PlaylistDetail({ playlist, songs: fixedSongs, onBack, is
             onSave={onSave}
             onRemove={canRemove ? setRemoving : undefined}
             onPlay={() => play(shown, i)}
+            checking={swap?.status === 'planning' && swap.checking?.has(song.id)}
           />
         ))}
+        {extend?.status === 'loading' && (
+          <div className="flex flex-col gap-2.5 border-l-[3px] border-teal pl-2.5">
+            <p role="status" className="text-[13px] font-semibold text-teal">
+              Adding {EXTEND_BY} songs
+            </p>
+            {Array.from({ length: 3 }, (_, i) => (
+              <SkeletonPlaylistRow key={i} index={i + 2} columns={PLAYLIST_COLUMNS} />
+            ))}
+          </div>
+        )}
       </div>
     )
   }
@@ -312,7 +345,13 @@ export default function PlaylistDetail({ playlist, songs: fixedSongs, onBack, is
         <div className="min-w-0">
           <h1 className="truncate font-serif text-[30px] font-semibold">{playlist.name}</h1>
           {summary && <p className="mt-1 text-[15px] text-muted">{summary}</p>}
-          {ready && listSongs.length > 0 && (
+          {isLiked && likedLoad && (
+            <p role="status" className="mt-1 flex items-center gap-1.5 text-[13px] text-muted">
+              <Spinner size={13} />
+              {likedLoad.total ? `Loading more from Spotify: ${likedLoad.have} of ${likedLoad.total}` : 'Checking Spotify for more liked songs…'}
+            </p>
+          )}
+          {ready && canPlay && listSongs.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -375,7 +414,7 @@ export default function PlaylistDetail({ playlist, songs: fixedSongs, onBack, is
               disabled={extend?.status === 'loading'}
               className="inline-flex h-10 items-center gap-1.5 rounded-full bg-teal px-4 text-sm font-semibold text-white disabled:opacity-50"
             >
-              <Plus size={16} aria-hidden="true" />
+              {extend?.status === 'loading' ? <Spinner /> : <Plus size={16} aria-hidden="true" />}
               {extend?.status === 'loading' ? 'Finding songs…' : 'Extend'}
             </button>
           )}
@@ -414,11 +453,16 @@ export default function PlaylistDetail({ playlist, songs: fixedSongs, onBack, is
                 disabled={swap?.status === 'planning'}
                 className="inline-flex h-9 items-center gap-1.5 rounded-full border border-teal bg-surface px-4 text-sm font-semibold text-teal disabled:opacity-50"
               >
-                <ArrowRightLeft size={16} aria-hidden="true" />
+                {swap?.status === 'planning' ? <Spinner /> : <ArrowRightLeft size={16} aria-hidden="true" />}
                 {swap?.status === 'planning' ? 'Finding fits…' : 'Swap songs'}
               </button>
             )}
           </div>
+          {swap?.status === 'planning' && (
+            <div className="h-1 w-full overflow-hidden rounded-full bg-surface">
+              <div className="h-full rounded-full bg-teal transition-[width] duration-500 ease-out" style={{ width: `${Math.round(swap.progress * 100)}%` }} />
+            </div>
+          )}
         </div>
       )}
 
@@ -433,7 +477,7 @@ export default function PlaylistDetail({ playlist, songs: fixedSongs, onBack, is
             disabled={extend?.status === 'loading'}
             className="inline-flex h-9 items-center gap-1.5 rounded-full border border-teal px-4 text-sm font-semibold text-teal disabled:opacity-50"
           >
-            <Plus size={16} aria-hidden="true" />
+            {extend?.status === 'loading' ? <Spinner /> : <Plus size={16} aria-hidden="true" />}
             {extend?.status === 'loading' ? 'Finding songs…' : 'Extend playlist'}
           </button>
         </div>
