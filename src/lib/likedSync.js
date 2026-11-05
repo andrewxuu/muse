@@ -4,7 +4,6 @@ import { reportSyncError } from './cloudSync'
 
 const PAGE = 50
 const READ = 1000
-const MAX_REQUESTS = 200
 
 const must = ({ data, error, count }) => {
   if (error) {
@@ -71,10 +70,10 @@ async function save(userId, songs) {
   }
 }
 
-async function sync(userId, onProgress) {
+async function sync(userId, max, onProgress) {
   const known = await readIds(userId)
   const first = await getLikedPage(0)
-  let requests = 1
+  const limit = Math.min(first.total, max)
   let have = known.size
   const fresh = []
   const take = (songs) => {
@@ -82,7 +81,7 @@ async function sync(userId, onProgress) {
     unknown.forEach((s) => known.add(s.id))
     fresh.push(...unknown)
     have += unknown.length
-    onProgress?.(Math.min(have, first.total), first.total)
+    onProgress?.(Math.min(have, limit), limit)
     return unknown.length
   }
 
@@ -91,32 +90,30 @@ async function sync(userId, onProgress) {
   while (true) {
     const added = take(page.songs)
     offset += PAGE
-    if (!added || offset >= first.total || requests >= MAX_REQUESTS) break
+    if (!added || offset >= limit) break
     page = await getLikedPage(offset)
-    requests += 1
   }
 
   offset = Math.floor(have / PAGE) * PAGE
-  while (have < first.total && offset < first.total && requests < MAX_REQUESTS) {
+  while (have < limit && offset < limit) {
     page = await getLikedPage(offset)
-    requests += 1
     take(page.songs)
     offset += PAGE
   }
 
   if (fresh.length) await save(userId, fresh)
   must(await supabase.from('user_data').upsert({ user_id: userId, liked_synced_at: new Date().toISOString() }))
-  return { songs: await readAll(userId), full: have >= first.total }
+  return { songs: await readAll(userId), full: have >= limit }
 }
 
-export async function loadLikedSongs(userId, fallbackMax, onProgress) {
+export async function loadLikedSongs(userId, max, onProgress) {
   const fallback = async () => {
-    const songs = await getLikedSongs(fallbackMax)
-    return { songs, full: songs.length < fallbackMax }
+    const songs = await getLikedSongs(max)
+    return { songs, full: songs.length < max }
   }
   if (!supabase || !userId) return fallback()
   try {
-    return await sync(userId, onProgress)
+    return await sync(userId, max, onProgress)
   } catch (err) {
     if (!err.fromDb) throw err
     reportSyncError(err)
