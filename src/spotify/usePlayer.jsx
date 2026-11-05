@@ -43,8 +43,9 @@ function savedVolume() {
 }
 
 export function PlayerProvider({ children }) {
-  const { status } = useSpotify()
+  const { status, profile } = useSpotify()
   const connected = status === 'connected'
+  const free = Boolean(profile?.product) && profile.product !== 'premium'
   const playerRef = useRef(null)
   const [volume, setVolumeState] = useState(savedVolume)
   const volumeRef = useRef(volume)
@@ -57,7 +58,7 @@ export function PlayerProvider({ children }) {
   const [notice, setNotice] = useState(null)
 
   useEffect(() => {
-    if (!connected) return
+    if (!connected || free) return
     let cancelled = false
     let player = null
 
@@ -107,13 +108,15 @@ export function PlayerProvider({ children }) {
       playerRef.current = null
       deviceRef.current = null
     }
-  }, [connected])
+  }, [connected, free])
+
+  const canPlay = !free && fault !== 'premium'
 
   const play = useCallback(
     async (input, index = 0) => {
       const queue = (Array.isArray(input) ? input : [input]).filter((s) => s?.uri)
       const song = queue[index]
-      if (!song) return
+      if (!song || !canPlay) return
       if (!connected) return setNotice('connect')
       if (fault) return setNotice(fault)
       const player = playerRef.current
@@ -137,7 +140,7 @@ export function PlayerProvider({ children }) {
         setNotice(err instanceof ReconnectError || err.status === 403 ? 'reconnect' : 'error')
       }
     },
-    [connected, fault]
+    [connected, fault, canPlay]
   )
 
   const setVolume = useCallback((next) => {
@@ -179,6 +182,7 @@ export function PlayerProvider({ children }) {
       hasNext: Boolean(live?.hasNext),
       notice,
       visible: Boolean(live) || Boolean(notice),
+      canPlay,
       play,
       toggle,
       next,
@@ -190,7 +194,7 @@ export function PlayerProvider({ children }) {
       volume,
       setVolume,
     }
-  }, [connected, closed, pending, playback, notice, play, toggle, next, prev, close, dismissNotice, notify, getPosition, volume, setVolume])
+  }, [connected, closed, pending, playback, notice, canPlay, play, toggle, next, prev, close, dismissNotice, notify, getPosition, volume, setVolume])
 
   return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>
 }

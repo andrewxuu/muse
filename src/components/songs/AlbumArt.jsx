@@ -1,6 +1,8 @@
 import { Play } from 'lucide-react'
+import { usePlayer } from '../../spotify/usePlayer'
 
 export default function AlbumArt({ song, size = 40, onPlay }) {
+  const { canPlay } = usePlayer()
   const style = { width: size, height: size }
   const art = song.image ? (
     <img src={song.image} alt="" style={style} className="rounded-lg object-cover" />
@@ -8,7 +10,7 @@ export default function AlbumArt({ song, size = 40, onPlay }) {
     <div style={style} className="rounded-lg bg-art" />
   )
 
-  if (!song.uri || !onPlay) return <div className="shrink-0">{art}</div>
+  if (!song.uri || !onPlay || !canPlay) return <div className="shrink-0">{art}</div>
 
   return (
     <button
